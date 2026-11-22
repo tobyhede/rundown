@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Command } from 'commander';
-import { TestWriter, setWriter, type OutputWriter } from '@rundown-org/core';
+import { TestWriter, generateOwnerToken, setWriter, type OutputWriter } from '@rundown-org/core';
 import type { SeamTransitionResult } from '../../src/helpers/transitions.js';
 
 // The shared body of `pass` and `fail` ends in one branch — the exit-code
@@ -35,6 +35,10 @@ const COMMANDS = [
   { name: 'fail', register: registerFailCommand },
 ] as const;
 
+// A well-formed Owner Token so the command reaches the (mocked) seam; the
+// token-option parser refuses a bare or malformed one before it.
+const TOKEN = generateOwnerToken();
+
 describe('transition command exit-code mapping', () => {
   let previousWriter: OutputWriter;
   let exitSpy: ReturnType<typeof jest.spyOn>;
@@ -59,19 +63,31 @@ describe('transition command exit-code mapping', () => {
   });
 
   it.each(COMMANDS)(
+    '$name refuses a bare invocation before the seam',
+    async ({ name, register }) => {
+      const program = new Command().exitOverride();
+      register(program);
+
+      await program.parseAsync(['node', 'rundown', name, '--step', '1']);
+
+      expect(runSeamTransition).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+    },
+  );
+
+  it.each(COMMANDS)(
     '$name exits non-zero when the seam reports an exit error',
     async ({ name, register }) => {
       runSeamTransition.mockResolvedValue({ exitError: true });
       const program = new Command().exitOverride();
       register(program);
 
-      await program.parseAsync(['node', 'rundown', name]);
+      await program.parseAsync(['node', 'rundown', name, '--token', TOKEN, '--step', '1']);
 
       // Pinned BEFORE the exit code, because the exit code alone cannot tell
       // this branch from a refusal that never reached the seam: option
-      // validation, `parseTransitionTarget`, and the atomic `--claim-id` /
-      // `--run` parsers all set `process.exitCode = 1` themselves and return
-      // early. Without this, a mutant anywhere in the pre-seam path leaves
+      // validation and the `--token` parser set `process.exitCode = 1`
+      // themselves and return early. Without this, a mutant anywhere in the pre-seam path leaves
       // this case green while the branch it exists to pin never runs.
       expect(runSeamTransition).toHaveBeenCalledTimes(1);
       expect(process.exitCode).toBe(1);
@@ -79,19 +95,18 @@ describe('transition command exit-code mapping', () => {
   );
 
   it.each(COMMANDS)(
-    '$name clears a code an inline child already set when the seam reports none',
+    '$name clears a code already set in this process when the seam reports none',
     async ({ name, register }) => {
-      // The else arm is not "leave it alone": an inline child's own STOP can
-      // have set a non-zero code earlier in this same process, and a parent
-      // that HANDLES that failure (FAIL ANY CONTINUE) must still exit 0. A
-      // pre-set code is therefore the only setup under which this arm's
-      // assignment is observable at all.
+      // The else arm is not "leave it alone": a handled failure (FAIL ANY
+      // CONTINUE) must exit 0 even when something earlier in this same process
+      // set a non-zero code. A pre-set code is therefore the only setup under
+      // which this arm's assignment is observable at all.
       process.exitCode = 1;
       runSeamTransition.mockResolvedValue({ exitError: false });
       const program = new Command().exitOverride();
       register(program);
 
-      await program.parseAsync(['node', 'rundown', name]);
+      await program.parseAsync(['node', 'rundown', name, '--token', TOKEN, '--step', '1']);
 
       expect(process.exitCode).toBeUndefined();
     },

@@ -9,9 +9,9 @@ scenarios:
   retry-reopens-and-completes:
     commands:
       - rd run --prompted for-retry-reopen-nondelegated.runbook.md
-      - rd pass
-      - rd fail
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.2 --index 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

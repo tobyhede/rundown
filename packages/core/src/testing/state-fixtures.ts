@@ -16,14 +16,14 @@
  * only caught when the state is read back, surfacing as whatever the reader does
  * with unreadable state (a refusal, a non-zero exit) rather than as an error
  * naming the field. Prefer `RunbookStateManager.create`, `seedRun`, or
- * `seedRunState`; see `testing/delegation-fixtures` for the parent-side
- * delegation shapes a delegating parent must carry.
+ * `seedRunState`.
  *
  * @module testing/state-fixtures
  */
 
 import { makeRunbookStateSchema } from '../schemas.js';
 import type { RunbookState } from '../runbook/types.js';
+import { generateOwnerToken, hashRunSecret, type SecretHash } from '../runbook/run-secrets.js';
 import { getRunbookStore } from '../runbook/storage/store-registry.js';
 
 /**
@@ -36,10 +36,16 @@ import { getRunbookStore } from '../runbook/storage/store-registry.js';
  *
  * @param cwd - Project root whose store should receive the run.
  * @param state - The run state to persist.
+ * @param ownerTokenHash - Hash of the run's Owner Token; a fresh one is minted
+ *   (and discarded) when the test does not need to drive the run by token.
  * @returns Resolves once the row is committed.
  * @throws {Error} When `state` does not satisfy the persisted-state schema.
  */
-export async function seedRunState(cwd: string, state: RunbookState): Promise<void> {
+export async function seedRunState(
+  cwd: string,
+  state: RunbookState,
+  ownerTokenHash?: SecretHash,
+): Promise<void> {
   const parsed = makeRunbookStateSchema(cwd).safeParse(state);
   if (!parsed.success) {
     throw new Error(
@@ -47,7 +53,7 @@ export async function seedRunState(cwd: string, state: RunbookState): Promise<vo
         'Fix the fixture, or use seedRawRunState if the test is specifically about invalid state.',
     );
   }
-  await seedRawRunState(cwd, state as unknown as Record<string, unknown>);
+  await seedRawRunState(cwd, state as unknown as Record<string, unknown>, ownerTokenHash);
 }
 
 /**
@@ -57,47 +63,33 @@ export async function seedRunState(cwd: string, state: RunbookState): Promise<vo
  * be a valid run, use {@link seedRunState} instead.
  *
  * Mirrors how the store reassembles a run on read: `lifecycle` is taken from its
- * own column and resolved completions from their own table, so both are written
- * from the supplied object rather than left inside `state_json`.
+ * own column, so it is written from the supplied object rather than left inside
+ * `state_json`. An existing row keeps its owner token hash; a new row gets the
+ * supplied one, or a freshly minted (and discarded) one.
  *
  * @param cwd - Project root whose store should receive the run.
  * @param raw - The full state object to persist, including its `id`.
+ * @param ownerTokenHash - Hash to store on a NEW row; ignored when the row exists.
  * @returns Resolves once the row is committed.
  */
-export async function seedRawRunState(cwd: string, raw: Record<string, unknown>): Promise<void> {
+export async function seedRawRunState(
+  cwd: string,
+  raw: Record<string, unknown>,
+  ownerTokenHash: SecretHash = hashRunSecret(generateOwnerToken()),
+): Promise<void> {
   const store = await getRunbookStore(cwd);
   const id = String(raw.id);
   const now = typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString();
   const startedAt = typeof raw.startedAt === 'string' ? raw.startedAt : now;
   const lifecycle = typeof raw.lifecycle === 'string' ? raw.lifecycle : 'running';
-  const completions =
-    typeof raw.resolvedCompletions === 'object' &&
-    raw.resolvedCompletions !== null &&
-    !Array.isArray(raw.resolvedCompletions)
-      ? (raw.resolvedCompletions as Record<string, unknown>)
-      : {};
 
   await store.transaction((txn) => {
     txn.tx
       .prepare(
-        `INSERT INTO runs (id, state_version, claim_generation, lifecycle, state_json, created_at, updated_at)
-           VALUES (:id, 0, 0, :lifecycle, :json, :startedAt, :now)
+        `INSERT INTO runs (id, lifecycle, owner_token_hash, state_version, state_json, created_at, updated_at)
+           VALUES (:id, :lifecycle, :ownerTokenHash, 0, :json, :startedAt, :now)
          ON CONFLICT(id) DO UPDATE SET state_json = :json, lifecycle = :lifecycle, updated_at = :now`,
       )
-      .run({ id, lifecycle, json: JSON.stringify(raw), startedAt, now });
-    txn.tx.prepare('DELETE FROM resolved_completions WHERE run_id = :id').run({ id });
-    const insert = txn.tx.prepare(
-      `INSERT INTO resolved_completions (run_id, completion_key, payload_json, created_at)
-         VALUES (:id, :key, :payload, :createdAt)`,
-    );
-    for (const [key, payload] of Object.entries(completions)) {
-      const createdAt =
-        typeof payload === 'object' &&
-        payload !== null &&
-        typeof (payload as { completedAt?: unknown }).completedAt === 'string'
-          ? (payload as { completedAt: string }).completedAt
-          : now;
-      insert.run({ id, key, payload: JSON.stringify(payload), createdAt });
-    }
+      .run({ id, lifecycle, ownerTokenHash, json: JSON.stringify(raw), startedAt, now });
   });
 }

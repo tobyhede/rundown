@@ -7,26 +7,26 @@ scenarios:
     description: Tests successful completion through branch point
     commands:
       - rd run --prompted substep-transitions.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
+      - rd pass --token ${TOKEN} --step 1.4
     result: COMPLETE
   after-retry:
     description: Tests retry behavior when initial step fails
     commands:
       - rd run --prompted substep-transitions.runbook.md
-      - rd fail
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
+      - rd pass --token ${TOKEN} --step 1.4
     result: COMPLETE
   via-branch:
     description: Tests GOTO transition to skip alternative path
     commands:
       - rd run --prompted substep-transitions.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
+      - rd pass --token ${TOKEN} --step 1.4
     result: COMPLETE
 tags:
   - transitions

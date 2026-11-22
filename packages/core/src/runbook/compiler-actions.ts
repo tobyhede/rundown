@@ -33,17 +33,6 @@ export interface ActionDefs {
     code: ForResolutionFailureCode;
     message: string;
   };
-  readonly setDelegationIssuanceFailed: {
-    reason:
-      | 'actor_context_required'
-      | 'delegation_resolution_failed'
-      | 'nested_delegation_forbidden';
-    message: string;
-  };
-  readonly storeDelegateFrontier: {
-    frontier: RunbookContext['delegateFrontier'];
-    substepStates: NonNullable<RunbookContext['substepStates']>;
-  };
   readonly storeResolvedArtifacts: { variables: Readonly<Record<string, TrustedArtifactValue>> };
   /** Evaluates step/substep OUTPUTS declarations and merges the results into live context variables. */
   readonly storeStepOutputs: {

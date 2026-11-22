@@ -7,13 +7,13 @@ scenarios:
     description: User confirms with YES, runbook continues
     commands:
       - rd run --prompted yes-no-aliases.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
   stopped:
     description: User declines with NO, runbook stops
     commands:
       - rd run --prompted yes-no-aliases.runbook.md
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1
     result: STOP
 tags:
   - prompts

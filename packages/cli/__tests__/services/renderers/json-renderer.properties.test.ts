@@ -25,20 +25,11 @@ function createMockWriter(): OutputWriter & { lines: string[] } {
   };
 }
 
-// Canonical mapping defined alongside the renderer's status-event handler in
-// packages/cli/src/services/renderers/json-renderer.ts. `stash`, `pop`, and
-// `claimed` carry distinct lifecycle payloads and get their own `kind`
-// discriminants (matching the schemas in
-// packages/core/src/output/zod-schemas.ts). Everything else folds into the
-// action family.
-const KIND_BY_ACTION: Record<string, string> = {
-  stash: 'stash',
-  pop: 'pop',
-  claimed: 'claim',
-};
-
-function expectedKindFor(action: string): string {
-  return KIND_BY_ACTION[action] ?? 'action';
+// Every status action folds into the action family: the stash/pop/claim
+// discriminants left with their commands (#901). See
+// packages/cli/src/services/renderers/json-renderer.ts case 'status'.
+function expectedKindFor(_action: string): string {
+  return 'action';
 }
 
 function renderStatus(action: string, message?: string, data?: Record<string, unknown>): string {
@@ -52,21 +43,10 @@ function renderStatus(action: string, message?: string, data?: Record<string, un
 }
 
 describe('JSONRenderer status-action → kind mapping (property)', () => {
-  it('matches the canonical mapping for the three special discriminants', () => {
-    fc.assert(
-      fc.property(fc.constantFrom('stash', 'pop', 'claimed'), (action) => {
-        expect(renderStatus(action)).toBe(expectedKindFor(action));
-      }),
-    );
-  });
-
-  it('folds any other action into the "action" family', () => {
-    // Generate arbitrary action strings excluding the three special cases.
+  it('folds every action into the "action" family', () => {
     // Restrict to identifier-ish strings so the renderer's JSON output stays
     // well-formed; the discriminant logic doesn't depend on character set.
-    const otherActionArb = fc
-      .stringMatching(/^[A-Za-z][A-Za-z0-9_-]{0,32}$/)
-      .filter((s) => s !== 'stash' && s !== 'pop' && s !== 'claimed');
+    const otherActionArb = fc.stringMatching(/^[A-Za-z][A-Za-z0-9_-]{0,32}$/);
     fc.assert(
       fc.property(otherActionArb, (action) => {
         expect(renderStatus(action)).toBe('action');
@@ -77,7 +57,7 @@ describe('JSONRenderer status-action → kind mapping (property)', () => {
   it('the mapping is unaffected by message and data payload contents', () => {
     // The renderer derives kind purely from `event.action`; carrying arbitrary
     // message/data must not change which kind is emitted.
-    const allActions = fc.constantFrom('stash', 'pop', 'claimed', 'CONTINUE', 'STOP', 'completed');
+    const allActions = fc.constantFrom('pass', 'fail', 'goto', 'CONTINUE', 'STOP', 'completed');
     fc.assert(
       fc.property(
         allActions,

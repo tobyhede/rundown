@@ -30,8 +30,8 @@ describe('running-runbooks skill description', () => {
     expect(readDescription()).toMatch(/start/i);
   });
 
-  it('still covers delegation claim tokens', () => {
-    expect(readDescription()).toMatch(/claim token/i);
+  it('no longer advertises delegation claim tokens', () => {
+    expect(readDescription()).not.toMatch(/claim/i);
   });
 });
 

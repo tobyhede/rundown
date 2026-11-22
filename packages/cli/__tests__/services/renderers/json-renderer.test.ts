@@ -7,7 +7,6 @@ import type {
   RunbookEventV1,
   StatusOutput,
 } from '@rundown-org/core';
-import { brandEffectiveVarsForTest } from '../../helpers/brand-helpers.js';
 
 function createMockWriter(): OutputWriter & { lines: string[] } {
   const lines: string[] = [];
@@ -76,7 +75,7 @@ describe('JSONRenderer', () => {
     });
 
     it('still flushes accumulated non-JSONL output alongside streamed events', () => {
-      // `rd claim` streams JSONL execution events AND produces an action
+      // A command may stream JSONL execution events AND produce an action
       // detail that accumulates into `this.output`. The empty-{} fix must
       // not suppress the legitimate action object.
       const writer = createMockWriter();
@@ -93,7 +92,7 @@ describe('JSONRenderer', () => {
       const detail: DetailOutput = {
         type: 'detail',
         format: 'custom',
-        data: { action: 'claimed', token: 'rdtk_xyz', kind: 'claim' },
+        data: { action: 'noted', note: 'xyz', kind: 'action' },
       };
 
       renderer.render(executionEvent(started));
@@ -103,56 +102,39 @@ describe('JSONRenderer', () => {
       expect(writer.lines).toHaveLength(2);
       expect(writer.lines[0]).toContain('"type":"runbook_started"');
       const tail = writer.lines[1];
-      expect(tail).toContain('"action":"claimed"');
-      expect(tail).toContain('"token":"rdtk_xyz"');
+      expect(tail).toContain('"action":"noted"');
+      expect(tail).toContain('"note":"xyz"');
     });
 
-    it('redacts inline launch context snapshots from streamed STEP_ENTERED output', () => {
+    it('emits owner_token on runbook_started and never claim_id', () => {
       const writer = createMockWriter();
       const renderer = new JSONRenderer({ writer });
-
-      const entered: RunbookEventV1 = {
+      const token = `rdo_${'a'.repeat(43)}`;
+      const started: RunbookEventV1 = {
         ...envelope(1),
-        type: 'STEP_ENTERED',
-        payload: {
-          position: { current: '1.1', total: 1 },
-          stepName: '1',
-          hasCommand: false,
-          isSubstep: true,
-          prompted: false,
-          artifacts: {},
-          inlineLaunch: {
-            parentRunId: 'rd_parent',
-            parentStepId: '1',
-            parentStep: '1',
-            parentFrameKey: '1|',
-            parentEntry: 1,
-            childRunId: 'rd_child',
-            childRunbookPath: 'child.runbook.md',
-            childRunbookRef: { source: 'project', path: 'child.runbook.md' },
-            contextSnapshot: {
-              vars: brandEffectiveVarsForTest({ SECRET: 'redact-me' }),
-              ancestors: [],
-              step: '1',
-              substep: '1',
-              at: '1.1',
-            },
-          },
-        },
+        type: 'RUNBOOK_STARTED',
+        payload: { prompted: false, ownerToken: token as never },
       };
 
-      renderer.render(executionEvent(entered));
+      renderer.render(executionEvent(started));
       renderer.flush();
 
-      const line = JSON.parse(writer.lines[0] ?? '{}') as {
-        inlineLaunch?: Record<string, unknown>;
-      };
-      expect(line.inlineLaunch).toMatchObject({
-        childRunId: 'rd_child',
-        childRunbookPath: 'child.runbook.md',
-      });
-      expect(line.inlineLaunch).not.toHaveProperty('contextSnapshot');
-      expect(writer.lines[0]).not.toContain('redact-me');
+      const line = JSON.parse(writer.lines[0] ?? '{}') as Record<string, unknown>;
+      expect(line.owner_token).toBe(token);
+      expect(line).not.toHaveProperty('ownerToken');
+      expect(line).not.toHaveProperty('claim_id');
+    });
+
+    it('omits owner_token when the started payload carries none', () => {
+      const writer = createMockWriter();
+      const renderer = new JSONRenderer({ writer });
+      renderer.render(
+        executionEvent({ ...envelope(1), type: 'RUNBOOK_STARTED', payload: { prompted: true } }),
+      );
+      renderer.flush();
+      const line = JSON.parse(writer.lines[0] ?? '{}') as Record<string, unknown>;
+      expect(line).not.toHaveProperty('owner_token');
+      expect(line.prompted).toBe(true);
     });
   });
 
@@ -223,12 +205,9 @@ describe('JSONRenderer', () => {
   });
 
   describe('status-action → kind mapping', () => {
-    // Each StatusOutput action carries a distinct lifecycle payload and the
-    // renderer assigns the appropriate `kind` discriminant. stash, pop, and
-    // claimed have their own kinds; everything else folds into the action
-    // family. See packages/cli/src/services/renderers/json-renderer.ts case
-    // 'status' and the corresponding schemas in
-    // packages/core/src/output/zod-schemas.ts.
+    // Every StatusOutput action folds into the action family; the stash/pop/
+    // claim discriminants left with their commands (#901). See
+    // packages/cli/src/services/renderers/json-renderer.ts case 'status'.
     function renderStatusKind(action: string): string {
       const writer = createMockWriter();
       const renderer = new JSONRenderer({ writer });
@@ -238,18 +217,6 @@ describe('JSONRenderer', () => {
       const parsed = JSON.parse(writer.lines[0]) as Record<string, unknown>;
       return parsed.kind as string;
     }
-
-    it('maps "claimed" → kind: "claim"', () => {
-      expect(renderStatusKind('claimed')).toBe('claim');
-    });
-
-    it('maps "stash" → kind: "stash"', () => {
-      expect(renderStatusKind('stash')).toBe('stash');
-    });
-
-    it('maps "pop" → kind: "pop"', () => {
-      expect(renderStatusKind('pop')).toBe('pop');
-    });
 
     it('maps "complete" → kind: "action" (action family default)', () => {
       expect(renderStatusKind('complete')).toBe('action');

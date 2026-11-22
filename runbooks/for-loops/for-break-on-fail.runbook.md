@@ -8,9 +8,9 @@ scenarios:
     description: Second iteration fails and breaks to step 2
     commands:
       - rd run --prompted for-break-on-fail.runbook.md
-      - rd pass
-      - rd fail
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.1 --index 2
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

@@ -6,13 +6,13 @@ scenarios:
     commands:
       - rd run --prompted for-next-retry.runbook.md
       # Iter 1 attempt 1: FAIL → retry fires
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
       # Iter 1 attempt 2: FAIL → retries exhausted, NEXT loops back
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 2
       # Iter 2: PASS → DEFER accumulates
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1 --index 3
       # Iter 3 (last): PASS → aggregation
-      - rd pass
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 # NEXT + Iteration RETRY

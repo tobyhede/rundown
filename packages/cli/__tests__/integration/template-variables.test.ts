@@ -8,6 +8,8 @@ import {
   createRunbook,
   parseJsonEvents as parseJsonlEvents,
   type TestWorkspace,
+  requireOwnerToken,
+  requireRunId,
 } from '../helpers/test-utils.js';
 
 describe('Template Variables Integration', () => {
@@ -434,13 +436,14 @@ rd echo a={{a}} b={{b}}
       await writeFile(runbookPath, runbookContent);
 
       // Run with variable to store expanded content
-      runCli('run test.runbook.md --input message=original --prompted --text', workspace);
+      const started = runCli('run test.runbook.md --input message=original --prompted', workspace);
+      const token = requireOwnerToken(started.stdout);
 
       // Delete source file to confirm we're using runbookSrc
       await rm(runbookPath);
 
       // Pass should work with stored runbookSrc
-      const result = runCli('pass', workspace);
+      const result = runCli(`pass --token ${token} --step 1`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Parse JSONL output - the last line contains the final state
@@ -470,10 +473,11 @@ rd echo a={{a}} b={{b}}
       const runbookPath = join(workspace.cwd, 'test.runbook.md');
       await writeFile(runbookPath, runbookContent);
 
-      runCli('run test.runbook.md --input message=original --prompted --text', workspace);
+      const started = runCli('run test.runbook.md --input message=original --prompted', workspace);
+      const token = requireOwnerToken(started.stdout);
       await rm(runbookPath);
 
-      const result = runCli('fail', workspace);
+      const result = runCli(`fail --token ${token} --step 1`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Parse JSONL output - the last line contains the final state
@@ -498,10 +502,11 @@ rd echo a={{a}} b={{b}}
       const runbookPath = join(workspace.cwd, 'test.runbook.md');
       await writeFile(runbookPath, runbookContent);
 
-      runCli('run test.runbook.md --input message=original --prompted --text', workspace);
+      const started = runCli('run test.runbook.md --input message=original --prompted', workspace);
+      const token = requireOwnerToken(started.stdout);
       await rm(runbookPath);
 
-      const result = runCli('goto 2', workspace);
+      const result = runCli(`goto 2 --token ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Parse JSONL output - the last line contains the final state
@@ -526,10 +531,11 @@ rd echo a={{a}} b={{b}}
       const runbookPath = join(workspace.cwd, 'test.runbook.md');
       await writeFile(runbookPath, runbookContent);
 
-      runCli('run test.runbook.md --input message=original --prompted --text', workspace);
+      const started = runCli('run test.runbook.md --input message=original --prompted', workspace);
+      const token = requireOwnerToken(started.stdout);
       await rm(runbookPath);
 
-      const result = runCli('complete', workspace);
+      const result = runCli(`complete --token ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Complete streams terminal observation events (JSONL) before the final
@@ -553,43 +559,12 @@ rd echo a={{a}} b={{b}}
       const runbookPath = join(workspace.cwd, 'test.runbook.md');
       await writeFile(runbookPath, runbookContent);
 
-      runCli('run test.runbook.md --input message=original --prompted --text', workspace);
+      const started = runCli('run test.runbook.md --input message=original --prompted', workspace);
       await rm(runbookPath);
 
-      const result = runCli('status', workspace);
+      const result = runCli(`status --run ${requireRunId(started.stdout)}`, workspace);
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout);
-      expect(output.position.total).toBe(2);
-    });
-
-    it('should use stored runbookSrc in pop command', async () => {
-      const runbookContent = createRunbook({
-        title: 'Test Runbook',
-        steps: [
-          { title: 'First Step', pass: 'CONTINUE', command: 'rd echo {{message}}' },
-          { title: 'Second Step', pass: 'COMPLETE', command: 'rd echo done' },
-        ],
-      });
-      const runbookPath = join(workspace.cwd, 'test.runbook.md');
-      await writeFile(runbookPath, runbookContent);
-
-      // Run with variable to store expanded content
-      runCli('run test.runbook.md --input message=original --prompted --text', workspace);
-
-      // Stash the runbook
-      runCli('stash --text', workspace);
-
-      // Delete source file to confirm we're using runbookSrc
-      await rm(runbookPath);
-
-      // Pop should work with stored runbookSrc
-      const result = runCli('pop', workspace);
-      expect(result.exitCode).toBe(0);
-
-      // Parse JSON output and verify runbook was restored
-      const output = JSON.parse(result.stdout);
-      expect(output.action).toBe('pop');
-      expect(output.position.current).toBe('1');
       expect(output.position.total).toBe(2);
     });
   });

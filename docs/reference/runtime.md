@@ -11,8 +11,7 @@ identity. For authoring syntax, see
 
 This specification covers behavior after a runbook has been selected for
 execution. It defines how the runtime evaluates commands, advances steps,
-resolves variables, stores state, handles data sources, and targets nested or
-delegated work.
+resolves variables, stores state, and handles data sources.
 
 This specification does not define Rundown document syntax, CLI command-line
 parsing, JSON output shape, policy file format, or implementation architecture
@@ -23,18 +22,17 @@ interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
 ## 2. Terminology
 
-| Term             | Meaning                                                                                                                                            |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime          | The CLI-managed execution process for one or more runbooks.                                                                                        |
-| Run              | One active or persisted execution of a runbook.                                                                                                    |
-| Run state        | One run's state persisted in `.rundown/rundown.db`.                                                                                                |
-| Session          | SQLite-backed active top-level runs, stash, and claim tracking.                                                                                    |
-| Frame            | Internal execution scope key: `step\|iteration`.                                                                                                   |
-| Entry            | Monotonic re-entry counter for a frame.                                                                                                            |
-| Claim            | `rdclm_...` bearer credential authorizing mutations on one run — the run `rundown run` controls, or a delegated child claimed via `rundown claim`. |
-| Data source      | Runtime value used by `FOR ... IN {{ source }}` iteration.                                                                                         |
-| Static variable  | Variable resolved once at run startup.                                                                                                             |
-| Dynamic variable | Variable derived from the current step, substep, or iteration frame.                                                                               |
+| Term             | Meaning                                                                                   |
+| ---------------- | ----------------------------------------------------------------------------------------- |
+| Runtime          | The CLI-managed execution process for one or more runbooks.                               |
+| Run              | One active or persisted execution of a runbook, identified by its run id (`rd_<32 hex>`). |
+| Run state        | One run's state persisted in `.rundown/rundown.db`.                                       |
+| Owner Token      | `rdo_…` secret printed once by `rundown run`; the sole authority to mutate that run.      |
+| Frame            | Internal execution scope key: `step\|iteration`.                                          |
+| Entry            | Monotonic re-entry counter for a frame.                                                   |
+| Data source      | Runtime value used by `FOR ... IN {{ source }}` iteration.                                |
+| Static variable  | Variable resolved once at run startup.                                                    |
+| Dynamic variable | Variable derived from the current step, substep, or iteration frame.                      |
 
 <a id="execution-model"></a>
 
@@ -42,12 +40,12 @@ interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
 Rundown separates runbook definition from runtime state.
 
-| Component      | Runtime role                                                                                  |
-| -------------- | --------------------------------------------------------------------------------------------- |
-| Runbook source | Defines steps, transitions, commands, inputs, outputs, and control flow.                      |
-| Runtime state  | Tracks current position, variables, retries, loop state, child links, and persisted snapshot. |
-| Agent or user  | Performs prompted work and reports `PASS` or `FAIL`.                                          |
-| CLI            | Evaluates transitions, persists state, runs executable command blocks, and enforces policy.   |
+| Component      | Runtime role                                                                                |
+| -------------- | ------------------------------------------------------------------------------------------- |
+| Runbook source | Defines steps, transitions, commands, inputs, outputs, and control flow.                    |
+| Runtime state  | Tracks current position, variables, retries, loop state, and persisted snapshot.            |
+| Agent or user  | Performs prompted work and reports `PASS` or `FAIL`.                                        |
+| CLI            | Evaluates transitions, persists state, runs executable command blocks, and enforces policy. |
 
 The runtime MUST preserve the conceptual separation between result, handler, and
 action:
@@ -121,14 +119,10 @@ The runtime MUST expand loop and location variables against the active frame.
 | `{{var}}`                | Named loop variable; for ranges, the iteration index; for data sources, the current item. |
 | `{{context.current.*}}`  | Canonical current structural context.                                                     |
 
-Dynamic variables MUST NOT be overridden by user input, config, environment, or
-delegation inheritance.
+Dynamic variables MUST NOT be overridden by user input, config, or environment.
 
 `Index` is the 1-based iteration number of the active `FOR` step. It is
-available in the step's substeps and, when a delegation is issued inside the
-loop, is inherited by the delegated child as the delegating iteration's index
-(language spec §10.4). A non-looping child does not re-derive `Index`, so the
-inherited value persists for the child's duration.
+available in the step's substeps.
 
 ### 5.3 Iteration Actions
 
@@ -218,113 +212,61 @@ Runtime state persists across process exits and context clears.
 
 ### 7.1 Storage Locations
 
-| Path                              | Purpose                                     |
-| --------------------------------- | ------------------------------------------- |
-| `.rundown/rundown.db`             | Run state, active stack, stash, and claims. |
-| `.rundown/runs/<run-id>/outputs/` | Captured filesystem outputs.                |
-| `.rundown/runbooks/`              | Project-local runbook discovery source.     |
+| Path                              | Purpose                                 |
+| --------------------------------- | --------------------------------------- |
+| `.rundown/rundown.db`             | Run records.                            |
+| `.rundown/runs/<run-id>/outputs/` | Captured filesystem outputs.            |
+| `.rundown/runbooks/`              | Project-local runbook discovery source. |
 
-### 7.2 Session Structure
+### 7.2 Run Records
 
-The session tracks top-level runs and delegated children separately.
+Each run is one row of the `runs` table, keyed by run id. A row holds:
 
-```json
-{
-  "defaultStack": ["rd_11111111111111111111111111111111"],
-  "stashedRunbookId": null,
-  "claims": {
-    "rdclk_22222222222222222222222222222222": {
-      "claimKey": "rdclk_22222222222222222222222222222222",
-      "secretHash": "sha256:...",
-      "controlledRunId": "rd_22222222222222222222222222222222",
-      "delegation": {
-        "childRunId": "rd_22222222222222222222222222222222",
-        "tokenHash": "sha256:...",
-        "parentRunId": "rd_11111111111111111111111111111111",
-        "parentStepId": "1.1",
-        "parentStep": "Process item",
-        "parentFrameKey": "1|",
-        "parentEntry": 1
-      },
-      "grants": [
-        { "action": "mutate-run", "runId": "rd_22222222222222222222222222222222" },
-        {
-          "action": "report-delegation-result",
-          "childRunId": "rd_22222222222222222222222222222222",
-          "tokenHash": "sha256:...",
-          "parentRunId": "rd_11111111111111111111111111111111",
-          "parentStepId": "1.1",
-          "parentStep": "Process item",
-          "parentFrameKey": "1|",
-          "parentEntry": 1
-        }
-      ],
-      "issuedAt": "2026-07-06T00:00:00.000Z",
-      "updatedAt": "2026-07-06T00:00:00.000Z"
-    }
-  }
-}
-```
+| Column                     | Requirement                                                                                                                                   |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lifecycle`                | Run lifecycle state: `running` during execution; `completed`, `stopped`, or `abandoned` once terminal. No current command writes `abandoned`. |
+| `owner_token_hash`         | SHA-256 hash of the run's Owner Token. The token itself is never stored.                                                                      |
+| `state_json`               | The run's `RunbookState` (§7.4), minus `lifecycle`.                                                                                           |
+| `state_version`            | Counter bumped on every `state_json` write; the basis of the single conditional save.                                                         |
+| `created_at`, `updated_at` | Row timestamps.                                                                                                                               |
 
-| Field              | Requirement                                                     |
-| ------------------ | --------------------------------------------------------------- |
-| `defaultStack`     | Tracks active top-level, inline, and unidentified/manual flows. |
-| `stashedRunbookId` | Stores the default-stack run paused by plain `rundown stash`.   |
-| `claims`           | Maps non-secret claim lookup keys to exact claim records.       |
+The table also has child-linkage columns and execution-lease columns; no current
+command writes them (composition, #903 / #904; execution leases, #902).
 
-Claimed delegated children MUST NOT be pushed onto `defaultStack`.
-
-Commands that accept `--claim-id` MUST resolve the exact child run for that
-bearer by deriving its non-secret lookup key, then MUST fail closed if the claim
-is missing, stale, terminal, or no longer linked to a live parent.
-
-### 7.3 Stash Targeting
-
-`stash` and `pop` target either the default stack or a specific claim.
-
-| Command                         | Runtime target                                                         |
-| ------------------------------- | ---------------------------------------------------------------------- |
-| `rundown stash`                 | Moves the default-stack active run into the single default stash slot. |
-| `rundown stash --claim-id <id>` | Stashes the claimed child and preserves its claim record.              |
-| `rundown pop`                   | Restores only default-stack stashes.                                   |
-| `rundown pop --claim-id <id>`   | Restores the child for that claim after parent-link validation.        |
-
-Plain `rundown pop` MUST NOT restore a claimed child.
-
-Inline force-terminal invariant: after bare `rundown complete` or bare
-`rundown stop` from an active inline child, the active inline chain is terminal
-and removed from `defaultStack`. Persisted child state remains available for
-audit, but no inline descendant in that chain remains `running` under a terminal
-inline ancestor. The cascade stops at delegation boundaries; a delegated inline
-root reports its terminal outcome to the delegating parent, which advances on
-`rundown collect`.
+Every run has exactly one owner. A mutating command presents the Owner Token,
+which the runtime hashes to find the run; there is no other mutation authority,
+and the run id is a read-only selector. A mutation commits with one conditional
+write against `state_version`; if another write landed first, the command is
+refused `CONCURRENT_MODIFICATION` and nothing is written. See
+[docs/reference/cli.md Run Ownership](cli.md#run-ownership).
 
 <a id="invalid-persisted-state--no-migration"></a>
 
-### 7.4 Invalid Persisted State / No Migration
+### 7.3 Invalid Persisted State / No Migration
 
 Persisted state MUST NOT be migrated between runtime versions. This applies to:
 
-| State              | Covered data                                                                                     |
-| ------------------ | ------------------------------------------------------------------------------------------------ |
-| Runbook state rows | Structured fields and opaque `snapshot` blob.                                                    |
-| Session state      | `defaultStack`, `stashedRunbookId`, and `claims`.                                                |
-| Delegation state   | Claim records, parent links, child links, credential descriptors/hashes, and completion records. |
+| State              | Covered data                                                |
+| ------------------ | ----------------------------------------------------------- |
+| Runbook state rows | Structured fields and opaque `snapshot` blob.               |
+| Run rows           | `lifecycle`, `owner_token_hash`, and the remaining columns. |
 
 Two independent version checks guard this state. They are separate mechanisms
 and MUST NOT be conflated:
 
-| Check                        | Governs                                                                                     | Requirement                                                                                                                    |
-| ---------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `RunbookState.schemaVersion` | Runbook state **only** — the structured fields and the opaque `snapshot` blob of a run row. | MUST be `2`. Any other value makes that run's state invalid.                                                                   |
-| SQLite schema version        | The whole state database, including the session, stash, and delegation/claim tables.        | Stored in `PRAGMA user_version` and MUST equal the version this build installs. Any other version is rejected as incompatible. |
+| Check                        | Governs                                                                                     | Requirement                                                                                                               |
+| ---------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `RunbookState.schemaVersion` | Runbook state **only** — the structured fields and the opaque `snapshot` blob of a run row. | MUST equal `CURRENT_SCHEMA_VERSION` (currently `3`). Any other value makes that run's state invalid (`RD-309`).           |
+| SQLite schema version        | The whole state database, including every column of the `runs` table.                       | Stored in `PRAGMA user_version` and MUST equal the version this build installs. Any other version is rejected (`RD-305`). |
 
-Session, stash, and delegation rows carry no `schemaVersion` field of their own;
-they are governed solely by the database schema version. Do not apply
-`RunbookState.schemaVersion` to them.
+Run-row columns carry no `schemaVersion` of their own; they are governed solely
+by the database schema version. Do not apply `RunbookState.schemaVersion` to
+them.
 
 If persisted state is structurally incompatible, corrupt, unreadable, or fails
 either version check, Rundown MUST fail closed and refuse to continue that run.
+`RD-305` affects the whole database; `RD-309` affects only the one run. See
+[docs/reference/cli.md Common Errors](cli.md#common-errors-and-resolutions).
 
 The recovery path is to finish or close the affected run if possible, or prune
 the incompatible state and restart from the source runbook. The runtime MUST NOT
@@ -335,7 +277,7 @@ schema/runtime change plus an explicit invalid-state error over runtime
 migration code, fallback parsing, legacy field hydration, warning-only adapters,
 or compatibility branches for older persisted state.
 
-### 7.5 Runbook State Fields
+### 7.4 Runbook State Fields
 
 Each SQLite run state row stores enough information to resume deterministically.
 
@@ -351,11 +293,13 @@ Each SQLite run state row stores enough information to resume deterministically.
   "description": "Runbook description",
   "step": "2",
   "substep": "1",
+  "stepName": "Deploy",
   "retryCount": 0,
   "variables": { "environment": "staging" },
+  "steps": [],
+  "prompted": false,
   "templateVars": { "environment": "staging" },
   "substepStates": [],
-  "resolvedCompletions": {},
   "frameEntryCounts": { "2|2": 1 },
   "activeFrameKey": "2|2",
   "activeEntry": 1,
@@ -365,13 +309,12 @@ Each SQLite run state row stores enough information to resume deterministically.
   "lastAction": { "type": "CONTINUE" },
   "startedAt": "2026-04-28T00:00:00.000Z",
   "updatedAt": "2026-04-28T00:01:00.000Z",
-  "parentLinkage": null,
   "frontmatterOutputs": [],
   "finalVars": {},
   "lifecycle": "running",
   "runbookSrc": "---\nname: my-runbook\n---\n# My Runbook\n...",
   "snapshot": {},
-  "schemaVersion": 2
+  "schemaVersion": 3
 }
 ```
 
@@ -381,48 +324,35 @@ Each SQLite run state row stores enough information to resume deterministically.
 | `runbook`                                           | Canonical runbook identity object: `{ source, path }`, where `source` is `project`, `plugin`, `bundled`, or `external`. For `project`, `plugin`, and `bundled` sources, `path` is a source-root-relative Markdown path. For `external` sources, `path` is a normalized absolute filesystem path. |
 | `runbookPath`                                       | Display/execution file path relative to the current project when possible.                                                                                                                                                                                                                       |
 | `step`, `substep`                                   | Current structural position.                                                                                                                                                                                                                                                                     |
+| `stepName`                                          | Human-readable description of the current step.                                                                                                                                                                                                                                                  |
+| `steps`                                             | Per-step status records.                                                                                                                                                                                                                                                                         |
+| `prompted`                                          | Whether the run announces its commands rather than executing them. Required; written once at creation.                                                                                                                                                                                           |
 | `retryCount`                                        | User-visible retry count across retry sites.                                                                                                                                                                                                                                                     |
 | `variables`                                         | Live variable space, including accumulated outputs.                                                                                                                                                                                                                                              |
 | `templateVars`                                      | Frozen variable map used for deterministic resume rendering.                                                                                                                                                                                                                                     |
 | `forStack`                                          | Active loop frame and current source value.                                                                                                                                                                                                                                                      |
 | `iterationResults`                                  | Results recorded for current loop aggregation.                                                                                                                                                                                                                                                   |
-| `substepStates`                                     | Substep lifecycle and delegation state.                                                                                                                                                                                                                                                          |
+| `substepStates`                                     | Substep lifecycle and result.                                                                                                                                                                                                                                                                    |
 | `resolvedCompletions`                               | Completion records keyed by frame, entry, and substep.                                                                                                                                                                                                                                           |
-| `frameEntryCounts`, `activeFrameKey`, `activeEntry` | Re-entry-safe identity for stale-completion rejection. Monotonic entry counts for GOTO/RETRY scope isolation — frame presence means _ever entered_, never _currently open_.                                                                                                                      |
+| `frameEntryCounts`, `activeFrameKey`, `activeEntry` | Re-entry-safe frame identity. Monotonic entry counts for GOTO/RETRY scope isolation — frame presence means _ever entered_, never _currently open_.                                                                                                                                               |
 | `lastResult`, `lastAction`                          | Last result signal and resolved action.                                                                                                                                                                                                                                                          |
 | `startedAt`, `updatedAt`                            | ISO timestamps for run creation and last state write.                                                                                                                                                                                                                                            |
-| `parentLinkage`                                     | Linkage describing how a child run was attached to its parent (absent for top-level runs).                                                                                                                                                                                                       |
 | `frontmatterOutputs`                                | Frontmatter `outputs:` declarations parsed at startup, seeded into the machine on every actor creation.                                                                                                                                                                                          |
-| `finalVars`                                         | Evaluated frontmatter output values at runbook termination; read by parent delegation completion.                                                                                                                                                                                                |
-| `lifecycle`                                         | Run lifecycle state: `running` during execution, `completed` or `stopped` once terminal.                                                                                                                                                                                                         |
+| `finalVars`                                         | Evaluated frontmatter output values at runbook termination.                                                                                                                                                                                                                                      |
+| `lifecycle`                                         | Run lifecycle state: `running` during execution; `completed`, `stopped`, or `abandoned` once terminal. No current command writes `abandoned`.                                                                                                                                                    |
 | `runbookSrc`                                        | Raw source content with template placeholders preserved.                                                                                                                                                                                                                                         |
 | `snapshot`                                          | Opaque XState persisted snapshot.                                                                                                                                                                                                                                                                |
-| `schemaVersion`                                     | Persisted state schema version. Current v2 state writes numeric `2`.                                                                                                                                                                                                                             |
+| `schemaVersion`                                     | Persisted state schema version. MUST equal `CURRENT_SCHEMA_VERSION` (currently `3`).                                                                                                                                                                                                             |
 
 The runtime MUST treat `snapshot` as persisted state subject to the no-migration
 rule.
 
-### 7.6 Inline Child Runs
+### 7.5 Composition
 
-Non-DELEGATE runbook-list substeps execute as inline child runs. When the parent
-enters such a substep, the runtime prepares a one-shot inline launch intent
-containing the parent run identity, parent step/substep frame, preallocated
-child run id, child runbook reference, and an internal context snapshot for
-inheritance. The entered-step event exposes public inline child metadata so
-front ends can attribute the child launch to the parent substep; the internal
-context snapshot MUST NOT be rendered in public CLI JSON.
-
-The CLI consumes the inline launch intent by starting or resuming the child
-runbook with inline parent linkage, recording `INLINE_CHILD_STARTED` on the
-parent, and then clearing the one-shot intent. When the inline child reaches a
-terminal lifecycle, its `PASS` or `FAIL` result propagates to the parent substep
-using the same completion path as delegated child results. Inline child final
-variables are forwarded to the parent live variable space on completion.
-
-Automatic inline launch is forbidden inside claimed delegated child scopes. If a
-claimed child reaches a non-DELEGATE runbook-list substep, the runtime MUST stop
-that child with `inline_launch_forbidden`; it MUST NOT silently launch a
-grandchild or fall back to local prompt-only substep execution.
+Runbooks whose steps compose other runbooks (runbook-list or `DELEGATE`
+substeps) are currently refused at `rundown run` with
+`RUNBOOK_COMPOSITION_UNSUPPORTED`; inline composition returns in #903 and
+delegation in #904.
 
 <a id="template-variables"></a>
 
@@ -435,23 +365,22 @@ defined in [docs/spec/language.md §9](../spec/language.md#9-templating).
 
 ### 8.1 Variable Sources
 
-Variables are resolved by layering five sources. Each layer overrides every
+Variables are resolved by layering four sources. Each layer overrides every
 layer below it; the table lists them from lowest to highest precedence:
 
-| Layer               | Source                             | Rule                                                                                                                    |
-| ------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `builtins` (lowest) | Built-in defaults                  | Runtime-provided static built-ins (`Date`, `Branch`, `WorkPath`, `ContextId`, …).                                       |
-| `config`            | `.rundown/config.yaml`             | Auto-discovered from cwd upward.                                                                                        |
-| `inherited`         | Inherited delegation variables     | Parent runtime variable space passed to a child, including inherited step `OUTPUTS`. Overrides `config` and `builtins`. |
-| `env`               | `RD_INPUT_*` environment variables | Prefix stripped.                                                                                                        |
-| `cli` (highest)     | Explicit invocation inputs         | `--input`, `--input-json`, and `--input-file`.                                                                          |
+| Layer               | Source                             | Rule                                                                              |
+| ------------------- | ---------------------------------- | --------------------------------------------------------------------------------- |
+| `builtins` (lowest) | Built-in defaults                  | Runtime-provided static built-ins (`Date`, `Branch`, `WorkPath`, `ContextId`, …). |
+| `config`            | `.rundown/config.yaml`             | Auto-discovered from cwd upward.                                                  |
+| `env`               | `RD_INPUT_*` environment variables | Prefix stripped.                                                                  |
+| `cli` (highest)     | Explicit invocation inputs         | `--input`, `--input-json`, and `--input-file`.                                    |
 
 Within the `cli` layer, `--input-json` overrides `--input`, which overrides
-`--input-file`. Inherited step `OUTPUTS` ride the `inherited` layer — they are
-not a separate gap-fill tier and **do** override `config` and `builtins`.
-`--input-file` paths must be project-relative and must remain inside the project
-directory after symlink resolution; absolute paths and `..` traversal are
-rejected.
+`--input-file`. Input artifacts (`--artifacts`, `--artifacts-json`) are a
+separate boundary channel, not a variable layer; supplying the same name through
+both channels is an error. `--input-file` paths must be project-relative and
+must remain inside the project directory after symlink resolution; absolute
+paths and `..` traversal are rejected.
 
 Plugin variables are not a precedence layer. `CLAUDE_PLUGIN_ROOT` is injected
 post-resolution for plugin-sourced runbooks only, and only when the key is
@@ -481,22 +410,21 @@ files. Reserved `RD_INPUT_*` variables are skipped with a warning.
 ### 8.4 Undefined Variables
 
 Undefined variables and missing dotted paths are preserved as literal
-placeholders, such as `{{variable}}` or `{{context.parent.missing}}`. The
-runtime SHOULD emit one warning for each distinct undefined variable.
+placeholders, such as `{{variable}}` or `{{context.vars.missing}}`. The runtime
+SHOULD emit one warning for each distinct undefined variable.
 
 ### 8.5 Runtime Context Model
 
 The runtime exposes canonical namespaced context paths.
 
-| Path                       | Runtime meaning                                      |
-| -------------------------- | ---------------------------------------------------- |
-| `context.current.*`        | Current step, substep, index, and display `at` path. |
-| `context.parent.*`         | Nearest parent runbook structural context.           |
-| `context.parent.vars.NAME` | Parent resolved variable.                            |
-| `context.ancestors.N.*`    | Ancestor contexts; `0` is nearest parent.            |
-| `context.vars.NAME`        | Current variable namespace.                          |
+| Path                | Runtime meaning                                                        |
+| ------------------- | ---------------------------------------------------------------------- |
+| `context.current.*` | Current `step`, `substep`, `index`, and display `at` path.             |
+| `context.vars.NAME` | Current variable namespace: every user-visible variable, under `NAME`. |
 
-Parent context chain addressing is capped at 32 levels.
+Parent and ancestor context paths (`context.parent.*`, `context.ancestors.N.*`)
+belong to runbook composition, which is currently refused (§7.5); they return
+with #903 / #904.
 
 <a id="built-in-variables"></a>
 
@@ -512,12 +440,9 @@ dynamic current-frame values but remain reserved for user input.
 | `WorkPath`                                 | Fixed default artifact base `.rundown/work`; base for `{{ path "..." }}`.                                                                                                                                                                                                                                                                                                                                                                |
 | `RunbookRef`                               | Canonical `{ source, path }` parsed-object identity for the resolved runbook. Injected during runbook preparation. The key is `RunbookRef`, NOT `Runbook` — the trailing `Ref` is deliberate, signalling that the value is the parsed `{ source, path }` projection used by internal callers (e.g. `requireRunbookRef` in the compiler). Available in templates before substitution so runbooks can render their own canonical identity. |
 | `RunId`                                    | Fresh execution identifier for this runbook execution. Injected only for runnable execution, not for discovery or `rundown resolve`.                                                                                                                                                                                                                                                                                                     |
-| `ContextId`                                | Shared identity across a delegation tree; scopes path helpers into `.rd-<ContextId>/`.                                                                                                                                                                                                                                                                                                                                                   |
+| `ContextId`                                | Fresh per run (8 hex characters); scopes artifacts and path helpers into `.rd-<ContextId>/`.                                                                                                                                                                                                                                                                                                                                             |
 | `Step`, `Index`                            | Dynamic current step and iteration.                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `context.current.*`                        | Dynamic current structural context.                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `context.parent.*`                         | Parent structural context.                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `context.parent.vars.NAME`                 | Parent resolved variable.                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `context.ancestors.N.*`                    | Ancestor contexts.                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `context.vars.NAME`                        | Current variable namespace.                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 Static built-ins MAY be overridden by higher-precedence sources. Dynamic
@@ -527,7 +452,7 @@ Plugin runbooks MAY receive the upper-snake-case `CLAUDE_PLUGIN_ROOT` variable.
 It is not part of the §8.1 precedence layers: it is injected after variable
 resolution completes, for plugin-sourced runbooks only, and only when no
 resolved layer already provided the key. It is therefore a plugin-only default
-that any explicit input (`--input`, `RD_INPUT_*`, config, inherited) preempts.
+that any explicit input (`--input`, `RD_INPUT_*`, config) preempts.
 
 The default `WorkPath` value is shared at the project level and does not include
 a branch, run, or checkout suffix. Use `ContextId` with `{{ path "..." }}` or
@@ -564,8 +489,8 @@ token as `key`, and the resolved canonical `file:///...` URI.
 
 `RunbookRef` is available before template substitution so runbooks can render
 their own canonical identity. `RunId` is minted later, when a run is actually
-started or claimed, so commands that only resolve variables MUST NOT emit or
-persist a synthetic `RunId`.
+started, so commands that only resolve variables MUST NOT emit or persist a
+synthetic `RunId`.
 
 <a id="shell-environment"></a>
 
@@ -592,11 +517,6 @@ environment variables MUST NOT block or override them.
 the resolved static variable map. On resume, the runtime MUST re-apply FOR
 bounds and template placeholders from this frozen variable state so rendering
 remains deterministic.
-
-Delegated and inline children inherit the parent's `ContextId` and user
-variables, but MUST NOT inherit the parent's `RunId` or `RunbookRef`. Each child
-receives a fresh `RunId` and the canonical `RunbookRef` for its own resolved
-runbook.
 
 ## 9. Security Integration
 
@@ -626,14 +546,10 @@ Canonical runtime identity is `step + substep + iteration`.
 | Iteration          | Current `FOR` iteration, if active.     |
 | Frame              | Internal `step\|iteration` scope key.   |
 | Entry              | Monotonic re-entry counter for a frame. |
-| Completion key     | `frame + entry + substep`.              |
 
 Re-entering a frame through `GOTO`, `RETRY`, or other control flow increments
-the entry counter. Completions from older entries MUST be rejected as stale.
-
-Claim ids are isolation-against-accident handles, not adversarial security
-capabilities. Any local process that can read workspace state or command output
-can observe and reuse them.
+the entry counter, so each entry of a frame is distinguishable from earlier
+ones.
 
 ## 11. Conformance
 
@@ -648,21 +564,18 @@ A conforming Rundown runtime MUST satisfy these requirements:
    loops.
 6. Record iteration results only for actions that specify accumulation.
 7. Preserve canonical runtime identity as `step + substep + iteration`.
-8. Reject stale frame-entry completions.
-9. Keep claimed delegated children out of `defaultStack`.
-10. Make claim-targeted commands fail closed when the claim cannot safely target
-    one live delegated child.
-11. Launch non-DELEGATE runbook-list substeps inline and propagate their
-    terminal result to the parent substep.
-12. Forbid automatic inline launch inside claimed delegated child scopes.
-13. Preserve variable source precedence exactly as specified.
-14. Reject or skip reserved variable names according to their source.
-15. Prevent user input from overriding dynamic variables.
-16. Inject Rundown `RD_*` environment variables with Rundown-wins semantics.
-17. Confine file-backed data sources to project-root-contained, policy-allowed
+8. Count frame entries monotonically across re-entry.
+9. Accept a mutation only under the run's Owner Token, committed with a single
+   conditional write that refuses, never retries, a conflicting write.
+10. Refuse runbooks that compose other runbooks before any run is created.
+11. Preserve variable source precedence exactly as specified.
+12. Reject or skip reserved variable names according to their source.
+13. Prevent user input from overriding dynamic variables.
+14. Inject Rundown `RD_*` environment variables with Rundown-wins semantics.
+15. Confine file-backed data sources to project-root-contained, policy-allowed
     paths.
-18. Fail visibly for missing, denied, invalid, escaped, or drifted file-backed
+16. Fail visibly for missing, denied, invalid, escaped, or drifted file-backed
     data sources.
-19. Persist enough state to resume deterministically from `runbookSrc` and
+17. Persist enough state to resume deterministically from `runbookSrc` and
     `templateVars`.
-20. Never migrate, shim, adapt, rewrite, or resume incompatible persisted state.
+18. Never migrate, shim, adapt, rewrite, or resume incompatible persisted state.

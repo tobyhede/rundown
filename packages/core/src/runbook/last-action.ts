@@ -35,11 +35,6 @@ export const LastActionSchema: z.ZodType<LastAction> = z.discriminatedUnion('typ
   LastActionBaseSchema.extend({ type: z.literal('NEXT') }),
   LastActionBaseSchema.extend({ type: z.literal('BREAK') }),
   LastActionBaseSchema.extend({
-    type: z.literal('RETRY_ERROR'),
-    code: z.string(),
-    message: z.string(),
-  }),
-  LastActionBaseSchema.extend({
     type: z.literal('OUTPUT_CAPTURE_FAILED'),
     message: z.string(),
   }),
@@ -58,20 +53,6 @@ export const LastActionSchema: z.ZodType<LastAction> = z.discriminatedUnion('typ
   }),
   LastActionBaseSchema.extend({
     type: z.literal('COMMAND_EXECUTION_FAILED'),
-    message: z.string(),
-  }),
-  LastActionBaseSchema.extend({
-    type: z.literal('DELEGATION_ISSUANCE_FAILED'),
-    reason: z.enum([
-      'actor_context_required',
-      'delegation_resolution_failed',
-      'nested_delegation_forbidden',
-    ]),
-    message: z.string(),
-  }),
-  LastActionBaseSchema.extend({
-    type: z.literal('INLINE_LAUNCH_FAILED'),
-    reason: z.enum(['inline_launch_failed', 'inline_launch_forbidden']),
     message: z.string(),
   }),
 ]);

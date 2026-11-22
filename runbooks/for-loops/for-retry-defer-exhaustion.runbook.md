@@ -12,13 +12,13 @@ scenarios:
     commands:
       - rd run --prompted for-retry-defer-exhaustion.runbook.md
       # Iter 1 attempt 1: PASS -> DEFER accumulates PASS
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1 --index 1
       # Iter 2 attempt 1: FAIL -> RETRY 2 consumes first retry
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 2
       # Iter 2 attempt 2 (retry 1/2): FAIL -> RETRY 2 consumes second retry
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 2
       # Iter 2 attempt 3 (retry 2/2): FAIL -> retry exhausted, exhaustion DEFER fires
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 2
     expect:
       result: STOP
       steps:

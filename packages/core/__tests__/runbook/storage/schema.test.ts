@@ -34,11 +34,17 @@ async function schemaDriver(): Promise<NativeSqlDriver> {
 const RUN_DEFAULTS = {
   id: 'rd_test',
   lifecycle: 'running',
+  owner_token_hash: 'a'.repeat(64),
+  parent_run_id: null,
+  parent_step: null,
+  parent_frame_key: null,
+  parent_entry: null,
+  parent_kind: null,
+  lease_attempt: null,
+  lease_pid: null,
+  lease_start_id: null,
+  lease_started_at: null,
   state_json: '{}',
-  exec_pid: null,
-  exec_token: null,
-  exec_epoch: null,
-  exec_start_id: null,
   created_at: 'now',
   updated_at: 'now',
 } as const satisfies SqlParams;
@@ -52,79 +58,40 @@ const RUN_DEFAULTS = {
 function insertRun(tx: SqlTransaction, overrides: SqlParams = {}): void {
   const row = { ...RUN_DEFAULTS, ...overrides };
   tx.prepare(
-    `INSERT INTO runs (id, lifecycle, state_json, exec_pid, exec_token, exec_epoch,
-       exec_start_id, created_at, updated_at)
-     VALUES (:id, :lifecycle, :state_json, :exec_pid, :exec_token, :exec_epoch,
-       :exec_start_id, :created_at, :updated_at)`,
+    `INSERT INTO runs (id, lifecycle, owner_token_hash,
+       parent_run_id, parent_step, parent_frame_key, parent_entry, parent_kind,
+       lease_attempt, lease_pid, lease_start_id, lease_started_at,
+       state_json, created_at, updated_at)
+     VALUES (:id, :lifecycle, :owner_token_hash,
+       :parent_run_id, :parent_step, :parent_frame_key, :parent_entry, :parent_kind,
+       :lease_attempt, :lease_pid, :lease_start_id, :lease_started_at,
+       :state_json, :created_at, :updated_at)`,
   ).run(row);
 }
 
-const CLAIM_DEFAULTS = {
-  key: 'ck_test',
-  controlled_run: RUN_DEFAULTS.id,
-  secret_hash: 'hash',
-  issued_generation: 0,
-  status: 'active',
-  grants_json: '{}',
-  issued_at: 'now',
-  updated_at: 'now',
-  last_seen_at: 'now',
+/** A complete child linkage pointing at {@link RUN_DEFAULTS}. */
+const CHILD_LINK = {
+  id: 'rd_child',
+  owner_token_hash: 'b'.repeat(64),
+  parent_run_id: RUN_DEFAULTS.id,
+  parent_step: '2',
+  parent_frame_key: '2|',
+  parent_entry: 1,
+  parent_kind: 'delegation',
 } as const satisfies SqlParams;
 
-/**
- * Insert a `claims` row, overriding only the columns a constraint test varies.
- *
- * @param tx - Open writing transaction.
- * @param overrides - Column values replacing {@link CLAIM_DEFAULTS}.
- */
-function insertClaim(tx: SqlTransaction, overrides: SqlParams = {}): void {
-  const row = { ...CLAIM_DEFAULTS, ...overrides };
-  tx.prepare(
-    `INSERT INTO claims (key, controlled_run, secret_hash, issued_generation, status,
-       grants_json, issued_at, updated_at, last_seen_at)
-     VALUES (:key, :controlled_run, :secret_hash, :issued_generation, :status,
-       :grants_json, :issued_at, :updated_at, :last_seen_at)`,
-  ).run(row);
+/** Read the columns of a table in declaration order. */
+function columnsOf(driver: NativeSqlDriver, table: string): Promise<readonly string[]> {
+  return driver.read((tx) =>
+    tx
+      .prepare(`PRAGMA table_info(${table})`)
+      .all<{ readonly name: string }>()
+      .map((row) => row.name),
+  );
 }
-
-const ATTEMPT_DEFAULTS = {
-  run_id: RUN_DEFAULTS.id,
-  exec_epoch: 1,
-  exec_token: 'hashed',
-  phase: 'claimed',
-  owner_pid: 4242,
-  owner_start_id: null,
-  started_at: 'now',
-} as const satisfies SqlParams;
-
-/**
- * Insert an `execution_attempts` row, overriding only the columns a constraint
- * test varies.
- *
- * @param tx - Open writing transaction.
- * @param overrides - Column values replacing {@link ATTEMPT_DEFAULTS}.
- */
-function insertAttempt(tx: SqlTransaction, overrides: SqlParams = {}): void {
-  const row = { ...ATTEMPT_DEFAULTS, ...overrides };
-  tx.prepare(
-    `INSERT INTO execution_attempts (run_id, exec_epoch, exec_token, phase, owner_pid,
-       owner_start_id, started_at)
-     VALUES (:run_id, :exec_epoch, :exec_token, :phase, :owner_pid,
-       :owner_start_id, :started_at)`,
-  ).run(row);
-}
-
-const EXPECTED_TABLES = [
-  'runs',
-  'claims',
-  'session_stack',
-  'stash_slot',
-  'resolved_completions',
-  'execution_attempts',
-] as const;
 
 describe('storage schema', () => {
-  it('installs the current schema version with all six coordinated tables', async () => {
+  it('installs the current schema version with the single runs table', async () => {
     await using driver = memoryDriver();
     await driver.immediate((tx) => {
       ensureSchema(tx);
@@ -139,7 +106,31 @@ describe('storage schema', () => {
         .map((row) => row.name),
     );
 
-    expect(tables).toEqual([...EXPECTED_TABLES].sort());
+    // One table and nothing else for authority (ADR 0005): no claims, no
+    // session stack, no stash slot, no completion mailbox, no attempts ledger.
+    expect(tables).toEqual(['runs']);
+  });
+
+  it('carries the owner token hash, child linkage, lease and version columns', async () => {
+    await using driver = await schemaDriver();
+    expect(await columnsOf(driver, 'runs')).toEqual([
+      'id',
+      'lifecycle',
+      'owner_token_hash',
+      'parent_run_id',
+      'parent_step',
+      'parent_frame_key',
+      'parent_entry',
+      'parent_kind',
+      'lease_attempt',
+      'lease_pid',
+      'lease_start_id',
+      'lease_started_at',
+      'state_version',
+      'state_json',
+      'created_at',
+      'updated_at',
+    ]);
   });
 
   it('stamps user_version to SCHEMA_VERSION on install', async () => {
@@ -165,40 +156,40 @@ describe('storage schema', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('rejects a version-1 database missing the active-claim index without migrating', async () => {
-    await using driver = memoryDriver();
-    await driver.immediate((tx) => {
-      installSchema(tx);
-      tx.exec('DROP INDEX claims_one_active_per_run');
-      tx.exec('PRAGMA user_version = 1');
-    });
-
-    let refusal: unknown;
-    try {
+  it.each([1, 2])(
+    'rejects a version-%i multi-writer database without migrating it',
+    async (foundVersion) => {
+      await using driver = memoryDriver();
+      // The older schemas are not reproduced here; what matters is that the
+      // version gate refuses before any DDL runs, leaving the file untouched.
       await driver.immediate((tx) => {
-        ensureSchema(tx);
+        tx.exec('CREATE TABLE claims (key TEXT PRIMARY KEY NOT NULL)');
+        tx.exec(`PRAGMA user_version = ${String(foundVersion)}`);
       });
-    } catch (err) {
-      refusal = err;
-    }
 
-    expect(refusal).toBeInstanceOf(IncompatibleSchemaError);
-    expect(refusal).toMatchObject({
-      foundVersion: 1,
-      expectedVersion: SCHEMA_VERSION,
-    });
+      let refusal: unknown;
+      try {
+        await driver.immediate((tx) => {
+          ensureSchema(tx);
+        });
+      } catch (err) {
+        refusal = err;
+      }
 
-    const [version, indexes] = await driver.read((tx) => [
-      readSchemaVersion(tx),
-      tx
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type='index' AND name='claims_one_active_per_run'",
-        )
-        .all<{ readonly name: string }>(),
-    ]);
-    expect(version).toBe(1);
-    expect(indexes).toEqual([]);
-  });
+      expect(refusal).toBeInstanceOf(IncompatibleSchemaError);
+      expect(refusal).toMatchObject({ foundVersion, expectedVersion: SCHEMA_VERSION });
+
+      const [version, tables] = await driver.read((tx) => [
+        readSchemaVersion(tx),
+        tx
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+          .all<{ readonly name: string }>()
+          .map((row) => row.name),
+      ]);
+      expect(version).toBe(foundVersion);
+      expect(tables).toEqual(['claims']);
+    },
+  );
 
   it('rejects an incompatible future schema version, never migrating', async () => {
     await using driver = memoryDriver();
@@ -215,8 +206,7 @@ describe('storage schema', () => {
     ).rejects.toBeInstanceOf(IncompatibleSchemaError);
 
     // Refusing is only half the contract: the rejected open must leave the
-    // database exactly as it found it. A refusal that had already rewritten the
-    // version or re-run the DDL would be a migration by another name.
+    // database exactly as it found it.
     const [version, tables] = await driver.read((tx) => [
       readSchemaVersion(tx),
       tx
@@ -225,7 +215,7 @@ describe('storage schema', () => {
         .map((row) => row.name),
     ]);
     expect(version).toBe(future);
-    expect(tables).toEqual([...EXPECTED_TABLES].sort());
+    expect(tables).toEqual(['runs']);
   });
 
   it('carries the observed and expected versions on the refusal', async () => {
@@ -255,100 +245,205 @@ describe('storage schema', () => {
     ).rejects.toThrow(/CHECK constraint/i);
   });
 
-  it('accepts every lifecycle value the machine persists', async () => {
+  it('accepts every lifecycle value the machine persists, abandoned included', async () => {
     await using driver = await schemaDriver();
-    for (const lifecycle of ['running', 'completed', 'stopped']) {
+    const lifecycles = ['running', 'completed', 'stopped', 'abandoned'];
+    for (const [i, lifecycle] of lifecycles.entries()) {
       await expect(
         driver.immediate((tx) => {
-          insertRun(tx, { id: `rd_${lifecycle}`, lifecycle });
+          insertRun(tx, {
+            id: `rd_${lifecycle}`,
+            lifecycle,
+            owner_token_hash: String(i).repeat(64),
+          });
         }),
       ).resolves.toBeUndefined();
     }
   });
 
-  it('rejects a claim status outside the closed union', async () => {
+  it('requires an owner token hash on every row', async () => {
+    await using driver = await schemaDriver();
+    await expect(
+      driver.immediate((tx) => {
+        insertRun(tx, { owner_token_hash: null });
+      }),
+    ).rejects.toThrow(/NOT NULL constraint/i);
+  });
+
+  it('refuses two rows carrying the same owner token hash', async () => {
     await using driver = await schemaDriver();
     await driver.immediate((tx) => {
       insertRun(tx);
     });
     await expect(
       driver.immediate((tx) => {
-        insertClaim(tx, { status: 'revoked' });
+        insertRun(tx, { id: 'rd_other' });
       }),
-    ).rejects.toThrow(/CHECK constraint/i);
-    await expect(
-      driver.immediate((tx) => {
-        insertClaim(tx, { key: 'ck_active', status: 'active' });
-        insertClaim(tx, { key: 'ck_superseded', status: 'superseded' });
-      }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow(/UNIQUE constraint failed: runs\.owner_token_hash/);
   });
 
-  it('rejects an execution phase outside the closed union', async () => {
-    await using driver = await schemaDriver();
-    await driver.immediate((tx) => {
-      insertRun(tx);
+  describe('child linkage group', () => {
+    it('accepts a complete linkage naming an existing parent', async () => {
+      await using driver = await schemaDriver();
+      await expect(
+        driver.immediate((tx) => {
+          insertRun(tx);
+          insertRun(tx, CHILD_LINK);
+        }),
+      ).resolves.toBeUndefined();
     });
-    await expect(
-      driver.immediate((tx) => {
-        insertAttempt(tx, { phase: 'started' });
-      }),
-    ).rejects.toThrow(/CHECK constraint/i);
-  });
 
-  it('accepts every execution phase the attempt lifecycle uses', async () => {
-    await using driver = await schemaDriver();
-    await driver.immediate((tx) => {
-      insertRun(tx);
+    it.each([
+      ['parent_run_id', { ...CHILD_LINK, parent_run_id: null }],
+      ['parent_step', { ...CHILD_LINK, parent_step: null }],
+      ['parent_frame_key', { ...CHILD_LINK, parent_frame_key: null }],
+      ['parent_entry', { ...CHILD_LINK, parent_entry: null }],
+      ['parent_kind', { ...CHILD_LINK, parent_kind: null }],
+    ])('rejects a linkage missing %s (all-or-none)', async (_column, row) => {
+      await using driver = await schemaDriver();
+      await driver.immediate((tx) => {
+        insertRun(tx);
+      });
+      await expect(
+        driver.immediate((tx) => {
+          insertRun(tx, row);
+        }),
+      ).rejects.toThrow(/CHECK constraint/i);
     });
-    const phases = ['claimed', 'effect_started', 'recovery_pending', 'committed', 'released'];
-    await expect(
-      driver.immediate((tx) => {
-        phases.forEach((phase, i) => {
-          insertAttempt(tx, { exec_epoch: i + 1, phase });
-        });
-      }),
-    ).resolves.toBeUndefined();
+
+    it('rejects a parent kind outside the closed union', async () => {
+      await using driver = await schemaDriver();
+      await driver.immediate((tx) => {
+        insertRun(tx);
+      });
+      await expect(
+        driver.immediate((tx) => {
+          insertRun(tx, { ...CHILD_LINK, parent_kind: 'nested' });
+        }),
+      ).rejects.toThrow(/CHECK constraint/i);
+    });
+
+    it('rejects a linkage naming a parent that does not exist', async () => {
+      await using driver = await schemaDriver();
+      await expect(
+        driver.immediate((tx) => {
+          insertRun(tx, CHILD_LINK);
+        }),
+      ).rejects.toThrow(/FOREIGN KEY/i);
+    });
+
+    it('clears the whole linkage group when the parent row is deleted', async () => {
+      // The plan's `ON DELETE SET NULL` cannot coexist with the all-or-none
+      // CHECK: nulling `parent_run_id` alone fails the constraint and the parent
+      // could never be pruned. The trigger clears the group as one write.
+      await using driver = await schemaDriver();
+      await driver.immediate((tx) => {
+        insertRun(tx);
+        insertRun(tx, CHILD_LINK);
+      });
+      await expect(
+        driver.immediate((tx) => {
+          tx.prepare('DELETE FROM runs WHERE id = :id').run({ id: RUN_DEFAULTS.id });
+        }),
+      ).resolves.toBeUndefined();
+      const child = await driver.read((tx) =>
+        tx
+          .prepare(
+            'SELECT parent_run_id, parent_step, parent_frame_key, parent_entry, parent_kind FROM runs WHERE id = :id',
+          )
+          .get<Record<string, unknown>>({ id: CHILD_LINK.id }),
+      );
+      expect(child).toEqual({
+        parent_run_id: null,
+        parent_step: null,
+        parent_frame_key: null,
+        parent_entry: null,
+        parent_kind: null,
+      });
+    });
   });
 
-  it('rejects a partially populated execution identity on runs', async () => {
-    await using driver = await schemaDriver();
-    await expect(
-      driver.immediate((tx) => {
-        insertRun(tx, { exec_pid: 4242 });
-      }),
-    ).rejects.toThrow(/CHECK constraint/i);
+  describe('execution lease group', () => {
+    const LEASE = {
+      lease_attempt: 1,
+      lease_pid: 4242,
+      lease_start_id: 'start-1',
+      lease_started_at: 'now',
+    } as const satisfies SqlParams;
+
+    it('accepts a complete lease, with or without a start id', async () => {
+      await using driver = await schemaDriver();
+      await expect(
+        driver.immediate((tx) => {
+          insertRun(tx, LEASE);
+          insertRun(tx, {
+            ...LEASE,
+            id: 'rd_no_start_id',
+            owner_token_hash: 'c'.repeat(64),
+            lease_start_id: null,
+          });
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it.each([
+      ['lease_attempt', { ...LEASE, lease_attempt: null }],
+      ['lease_pid', { ...LEASE, lease_pid: null }],
+      ['lease_started_at', { ...LEASE, lease_started_at: null }],
+    ])('rejects a lease missing %s (all-or-none)', async (_column, row) => {
+      await using driver = await schemaDriver();
+      await expect(
+        driver.immediate((tx) => {
+          insertRun(tx, row);
+        }),
+      ).rejects.toThrow(/CHECK constraint/i);
+    });
+
+    it('rejects a start id with no lease around it', async () => {
+      await using driver = await schemaDriver();
+      await expect(
+        driver.immediate((tx) => {
+          insertRun(tx, { lease_start_id: 'orphan' });
+        }),
+      ).rejects.toThrow(/CHECK constraint/i);
+    });
   });
 
-  it('rejects an execution identity that names no attempt row', async () => {
-    await using driver = await schemaDriver();
-    await expect(
-      driver.immediate((tx) => {
-        insertRun(tx, {
-          exec_pid: 4242,
-          exec_token: 'hashed',
-          exec_epoch: 7,
-          exec_start_id: 'start-7',
+  describe('state_version trigger', () => {
+    it('bumps state_version on every state_json write and on nothing else', async () => {
+      await using driver = await schemaDriver();
+      await driver.immediate((tx) => {
+        insertRun(tx);
+      });
+      const version = (): Promise<number | undefined> =>
+        driver.read(
+          (tx) =>
+            tx
+              .prepare('SELECT state_version FROM runs WHERE id = :id')
+              .get<{ readonly state_version: number }>({ id: RUN_DEFAULTS.id })?.state_version,
+        );
+      expect(await version()).toBe(0);
+      await driver.immediate((tx) => {
+        tx.prepare("UPDATE runs SET lifecycle = 'completed' WHERE id = :id").run({
+          id: RUN_DEFAULTS.id,
         });
-      }),
-    ).rejects.toThrow(/FOREIGN KEY/i);
-  });
-
-  it('accepts an execution identity referencing its active attempt', async () => {
-    await using driver = await schemaDriver();
-    await expect(
-      driver.immediate((tx) => {
-        insertRun(tx, {
-          exec_pid: 4242,
-          exec_token: 'hashed',
-          exec_epoch: 7,
-          // A host without a process start id still owns the run: start id is
-          // optional on the attempt row, so it must stay optional here too.
-          exec_start_id: null,
+        tx.prepare(
+          "UPDATE runs SET lease_attempt = 1, lease_pid = 1, lease_started_at = 'now' WHERE id = :id",
+        ).run({
+          id: RUN_DEFAULTS.id,
         });
-        insertAttempt(tx, { exec_epoch: 7 });
-      }),
-    ).resolves.toBeUndefined();
+      });
+      expect(await version()).toBe(0);
+      await driver.immediate((tx) => {
+        tx.prepare('UPDATE runs SET state_json = \'{"a":1}\' WHERE id = :id').run({
+          id: RUN_DEFAULTS.id,
+        });
+        tx.prepare('UPDATE runs SET state_json = \'{"a":2}\' WHERE id = :id').run({
+          id: RUN_DEFAULTS.id,
+        });
+      });
+      expect(await version()).toBe(2);
+    });
   });
 
   it('reads a missing user_version row as an uninitialized database', () => {
@@ -363,40 +458,5 @@ describe('storage schema', () => {
       }),
     };
     expect(readSchemaVersion(emptyTx)).toBe(0);
-  });
-
-  it('records the #519 last_seen_at claim-activity column', async () => {
-    await using driver = memoryDriver();
-    await driver.immediate((tx) => {
-      ensureSchema(tx);
-    });
-    const columns = await driver.read((tx) =>
-      tx
-        .prepare('PRAGMA table_info(claims)')
-        .all<{ readonly name: string }>()
-        .map((row) => row.name),
-    );
-    expect(columns).toContain('last_seen_at');
-    expect(columns).toContain('issued_generation');
-  });
-
-  it('keeps execution phase only on execution_attempts, not on runs', async () => {
-    await using driver = memoryDriver();
-    await driver.immediate((tx) => {
-      ensureSchema(tx);
-    });
-    const [runCols, attemptCols] = await driver.read((tx) => [
-      tx
-        .prepare('PRAGMA table_info(runs)')
-        .all<{ readonly name: string }>()
-        .map((r) => r.name),
-      tx
-        .prepare('PRAGMA table_info(execution_attempts)')
-        .all<{ readonly name: string }>()
-        .map((r) => r.name),
-    ]);
-    expect(runCols).not.toContain('phase');
-    expect(attemptCols).toContain('phase');
-    expect(attemptCols).toContain('exec_token');
   });
 });

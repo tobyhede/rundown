@@ -37,18 +37,11 @@ contain the protocol itself.
    bundled).
 
 2. **Load the execution protocol — before starting.** So you are ready to
-   interpret the first step's output (including a delegation) the moment it
-   appears, rather than scrambling for the protocol after `rundown run` has
-   fired:
+   interpret the first step's output the moment it appears, rather than
+   scrambling for the protocol after `rundown run` has fired:
 
    Load and follow the bundled `running-runbooks` skill before starting the
    runbook.
-
-   If the runbook contains `- DELEGATE`, Stage 1 can show and operate on the
-   CLI/MCP output but does not provide Codex hook parity for automatic
-   child-agent dispatch or closure enforcement. Stop and report that Stage 2
-   delegation hook support is required before attempting automatic Codex
-   subagent orchestration.
 
 3. **Start it.**
 
@@ -56,10 +49,9 @@ contain the protocol itself.
    rundown run <name>
    ```
 
-   Capture the run id when you start the runbook: `rundown run` prints it at
-   start and every subsequent event carries it as `runbookId`. You need it for
-   every mutating command you issue as the orchestrator of a delegation-exposed
-   run.
+   Capture `owner_token` from the `runbook_started` event it prints. It is shown
+   once and never again, and every `pass`, `fail`, `goto`, `stop`, and
+   `complete` on this run needs it as `--token <owner_token>`.
 
    Pass inputs if the runbook requires them:
 
@@ -67,15 +59,15 @@ contain the protocol itself.
    rundown run <name> --input key=value
    ```
 
-   If `rundown run` reports missing required inputs, supply them and re-run.
+   If `rundown run` reports missing required inputs, supply them and re-run. If
+   it refuses with `RUNBOOK_COMPOSITION_UNSUPPORTED`, the runbook composes other
+   runbooks, which this build cannot run (until #903 / #904): report that to the
+   user and stop.
 
 4. **Execute.** Follow the loaded
    [running-runbooks](../running-runbooks/SKILL.md) protocol: respond to each
-   step with `rundown pass` / `rundown fail` and trust Rundown for transitions.
-   On a delegation-exposed run (any runbook with a `- DELEGATE` step), these
-   become `rundown pass --run <rd_…>` / `rundown fail --run <rd_…>` — the bare
-   form is for standalone runs only and otherwise refuses with
-   `ACTOR_CONTEXT_REQUIRED`.
+   step with `rundown pass --token <owner_token> --step <position>` (or
+   `rundown fail`) and trust Rundown for transitions.
 
 ## Reference
 

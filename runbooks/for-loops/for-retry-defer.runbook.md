@@ -6,11 +6,11 @@ scenarios:
     commands:
       - rd run --prompted for-retry-defer.runbook.md
       # Iter 1 attempt 1: FAIL → retry fires
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
       # Iter 1 attempt 2 (retry): PASS → DEFER accumulates 'pass'
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1 --index 1
       # Iter 2: PASS → DEFER accumulates 'pass'
-      - rd pass
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 # DEFER + Iteration RETRY

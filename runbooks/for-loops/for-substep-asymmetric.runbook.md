@@ -13,8 +13,8 @@ scenarios:
     description: Both substeps fail via DEFER, FAIL ANY triggers STOP
     commands:
       - rd run --prompted for-substep-asymmetric.runbook.md
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.1 --index 2
     result: STOP
 ---
 

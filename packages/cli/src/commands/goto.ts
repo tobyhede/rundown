@@ -12,18 +12,14 @@ import {
   gotoResultRequiresFailureExit,
   renderNavigationRefusal,
 } from '../helpers/goto-workflow.js';
-import {
-  withTransitionTargetOptions,
-  parseTransitionTarget,
-  transitionTargetFields,
-} from '../helpers/transition-target.js';
+import { parseTokenOption, withTokenOption } from '../helpers/token-option.js';
 
 /**
  * Registers the 'goto' command for jumping to specific steps.
  * @param program - Commander program instance to register the command on
  */
 export function registerGotoCommand(program: Command): void {
-  withTransitionTargetOptions(
+  withTokenOption(
     program
       .command('goto <step>')
       .description('Jump to specific step (e.g., "3" or "3.1" for substep)')
@@ -33,22 +29,17 @@ export function registerGotoCommand(program: Command): void {
     .action(
       async (
         stepArg: string,
-        options: {
-          index?: string;
-          claimId?: string;
-          run?: string;
-          text?: boolean;
-        },
+        options: { index?: string; token?: string; run?: string; text?: boolean },
       ) => {
         await withErrorHandling(
           async () => {
             const output = new OutputEmitter({ text: options.text, command: 'goto' });
             const cwd = getCwd();
 
-            const target = parseTransitionTarget(options, output);
-            if (!target) return;
+            const token = parseTokenOption(options, 'goto', output);
+            if (token === undefined) return;
             const contextResult = await buildGotoContext(output, cwd, {
-              ...transitionTargetFields(target),
+              token,
               commandStreamOptions: commandStreamOptionsForOutputMode(options.text),
             });
             // Refusal rendering is owned by one named dispatcher in
@@ -77,7 +68,6 @@ export function registerGotoCommand(program: Command): void {
               process.exit(1);
             }
 
-            // Flush any remaining output
             output.flush();
 
             if (gotoResultRequiresFailureExit(result)) {

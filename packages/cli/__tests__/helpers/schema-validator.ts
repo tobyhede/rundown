@@ -26,7 +26,6 @@ export {
   AvailableRunbookEntrySchema,
   RunbookListSchema,
   AvailableRunbooksListSchema,
-  CollectResponseSchema,
   ValidationErrorSchema,
   CheckResponseSchema,
   ScenarioSchema,
@@ -36,8 +35,6 @@ export {
   ScenarioErrorResponseSchema,
   EchoResponseSchema,
   PromptResponseSchema,
-  StashResponseSchema,
-  PopResponseSchema,
   ExecutionSummarySchema,
   RunCommandResponseSchema,
   // Command mapping
@@ -50,7 +47,6 @@ import {
   StatusResponseSchema,
   RunbookListSchema,
   AvailableRunbooksListSchema,
-  CollectResponseSchema,
   CheckResponseSchema,
   ScenarioListSchema,
   ScenarioShowResponseSchema,
@@ -58,8 +54,6 @@ import {
   ScenarioRunResponseSchema,
   EchoResponseSchema,
   PromptResponseSchema,
-  StashResponseSchema,
-  PopResponseSchema,
   ErrorResponseSchema,
   WarningResponseSchema,
   ExecutionSummarySchema,
@@ -199,16 +193,6 @@ export function validateCheckOutput(data: unknown): ValidationResult {
 }
 
 /**
- * Validate collect command JSON output.
- *
- * @param data - Parsed collect command JSON output to validate
- * @returns Validation result with schema errors, if any
- */
-export function validateCollectOutput(data: unknown): ValidationResult {
-  return validateSchema(CollectResponseSchema, data);
-}
-
-/**
  * Validate scenario ls command JSON output.
  */
 export function validateScenarioLsOutput(data: unknown): ValidationResult {
@@ -253,20 +237,6 @@ export function validatePromptOutput(data: unknown): ValidationResult {
  */
 export function validatePruneOutput(data: unknown): ValidationResult {
   return validateSchema(RunbookListSchema, data);
-}
-
-/**
- * Validate stash command JSON output.
- */
-export function validateStashOutput(data: unknown): ValidationResult {
-  return validateSchema(StashResponseSchema, data);
-}
-
-/**
- * Validate pop command JSON output.
- */
-export function validatePopOutput(data: unknown): ValidationResult {
-  return validateSchema(PopResponseSchema, data);
 }
 
 /**

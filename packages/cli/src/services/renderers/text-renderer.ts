@@ -10,7 +10,6 @@
 import {
   type OutputEvent,
   type OutputWriter,
-  type StepPosition,
   type RunbookEventV1,
   type ActionBlockData,
   type Step,
@@ -25,7 +24,6 @@ import {
   printRunbookComplete,
   printRunbookStopped,
   printRunbookStoppedAtStep,
-  printRunbookStashed,
   printNoActiveRunbook,
   printCommandExec,
   printPolicyDenied,
@@ -44,18 +42,14 @@ import type { OutputRenderer, RendererOptions } from './types.js';
 /** Data shape for status detail rendering. */
 interface StatusDetailData {
   active?: boolean;
-  stashed?: boolean;
   /**
    * Terminal lifecycle of the run this status describes.
    *
-   * Set by `buildActiveStatus` for a completed or stopped run, alongside
-   * `active: false`. It was absent from this shape entirely, so the renderer
-   * could not express "completed" even had it reached the code — a terminal run
-   * fell into the `!active && !stashed` early return and printed "No active
-   * runbook." at exit 0, while the same command in JSON reported
-   * `status: "completed"` plus the full body (#769).
+   * Set by `buildRunStatus` for a finished run, alongside `active: false`.
+   * Ordered before the empty-list early return so a finished run never
+   * prints "No runs." at exit 0 while JSON reports its real lifecycle (#769).
    */
-  status?: 'completed' | 'stopped';
+  status?: 'completed' | 'stopped' | 'abandoned';
   file?: string;
   state?: string;
   /** Run id this status describes; `state` is the same constant for every run. */
@@ -67,19 +61,19 @@ interface StatusDetailData {
     substep?: string;
     frameKey?: string;
     entry?: number;
-    unresolved?: number;
   };
   step?: { name: string; description?: string };
   lastAction?: { action: string; result?: 'PASS' | 'FAIL' };
   vars?: Record<string, string>;
   pending?: string[];
-  delegations?: {
-    substep: string;
+  /** Bare `rundown status`: every persisted run. */
+  runs?: {
+    id: string;
     runbook: string;
-    state: string;
-    childRunId?: string;
-    /** Non-secret claim lookup key for claimed delegation correlation. */
-    claimKey?: string;
+    status?: string;
+    step?: string;
+    total?: number;
+    title?: string;
   }[];
 }
 
@@ -240,34 +234,35 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Render status response as formatted text.
-   * @param data - Status data including active/stashed state, position, and step details
+   * @param data - Status data: a run list (bare status) or one run's detail
    */
   private renderStatusDetail(data: Record<string, unknown>): void {
-    const {
-      active,
-      stashed,
-      status,
-      file,
-      state,
-      runId,
-      prompted,
-      position,
-      step,
-      lastAction,
-      vars,
-      pending,
-      delegations,
-    } = data as StatusDetailData;
+    const { active, status, file, state, runId, prompted, position, step, lastAction, vars, runs } =
+      data as StatusDetailData;
 
-    // Terminal run. Ordered BEFORE the no-active early return, which is the
-    // whole defect: a completed or stopped run arrives with `active: false`,
-    // fell through to it, and reported "No active runbook." while JSON reported
-    // the run's real lifecycle at the same exit code (#769).
-    //
-    // Shaped like the stashed branch below rather than like the active one: a
-    // run that has finished has no next step to announce, so metadata plus the
-    // terminal marker plus the variables it resolved is the whole of what is
-    // still true about it.
+    // Bare `rundown status`: the run list.
+    if (runs !== undefined) {
+      if (runs.length === 0) {
+        this.writer.writeLine('No runs.');
+        return;
+      }
+      type RunRow = NonNullable<StatusDetailData['runs']>[number];
+      this.writer.writeLines(
+        formatTable<RunRow>(runs, [
+          { header: 'ID', get: (r) => r.id },
+          { header: 'STATUS', get: (r) => r.status ?? '' },
+          {
+            header: 'STEP',
+            get: (r) => (r.step !== undefined ? `${r.step}/${String(r.total ?? '?')}` : ''),
+          },
+          { header: 'RUNBOOK', get: (r) => r.runbook },
+          { header: 'TITLE', get: (r) => r.title ?? '' },
+        ]),
+      );
+      return;
+    }
+
+    // Finished run. Ordered BEFORE the no-run early return (#769).
     if (!active && status !== undefined) {
       if (file || state) {
         printMetadata(
@@ -284,26 +279,12 @@ export class TextRenderer implements OutputRenderer {
       return;
     }
 
-    // No active runbook
-    if (!active && !stashed) {
+    if (!active) {
       printNoActiveRunbook(this.writer);
       return;
     }
 
-    // Stashed only (no active)
-    if (!active && stashed && position) {
-      if (file || state) {
-        printMetadata(
-          { file: file ?? 'unknown', state: state ?? 'unknown', runId, prompted },
-          this.writer,
-        );
-      }
-      printRunbookStashed(position, this.writer);
-      this.renderVars(vars);
-      return;
-    }
-
-    // Active runbook
+    // Running run
     if (file || state) {
       printMetadata(
         { file: file ?? 'unknown', state: state ?? 'unknown', runId, prompted },
@@ -321,40 +302,12 @@ export class TextRenderer implements OutputRenderer {
       const stepObj = { name: step.name, description: step.description } as Step;
       printStepBlock(position, stepObj, !!prompted, this.writer);
     }
-    if (position?.entry !== undefined || position?.unresolved !== undefined) {
+    if (position?.entry !== undefined) {
       this.writer.writeLine('');
-      if (position.entry !== undefined) {
-        this.writer.writeLine(`Entry: ${String(position.entry)}`);
-      }
-      if (position.unresolved !== undefined) {
-        this.writer.writeLine(`Unresolved: ${String(position.unresolved)}`);
-      }
+      this.writer.writeLine(`Entry: ${String(position.entry)}`);
     }
 
     this.renderVars(vars);
-
-    // Show pending steps
-    if (pending && pending.length > 0) {
-      this.writer.writeLine(`\nPending: ${pending.join(', ')}`);
-    }
-
-    // Show delegations
-    if (delegations && delegations.length > 0) {
-      this.writer.writeLine('\nDelegations:');
-      for (const d of delegations) {
-        let stateLabel: string;
-        if (d.state === 'claimed') {
-          stateLabel = d.claimKey
-            ? `(claimed: ${d.claimKey} run: ${d.childRunId ?? 'unknown'})`
-            : `(claimed: ${d.childRunId ?? 'unknown'})`;
-        } else if (d.state === 'cancelled') {
-          stateLabel = '(cancelled)';
-        } else {
-          stateLabel = '(pending claim)';
-        }
-        this.writer.writeLine(`  ${d.substep}  ${d.runbook}  DELEGATED  ${stateLabel}`);
-      }
-    }
   }
 
   private renderVars(vars: Record<string, string> | undefined): void {
@@ -629,34 +582,9 @@ export class TextRenderer implements OutputRenderer {
 
   /**
    * Render a status event.
-   *
-   * Handles special cases for 'stash' and 'pop' actions that require
-   * position-aware formatting.
    * @param event - The status output event with result, action, and optional data
    */
   private renderStatus(event: OutputEvent & { type: 'status' }): void {
-    // Handle stash action with position data specially
-    if (event.action === 'stash' && event.data?.position) {
-      const pos = event.data.position as StepPosition;
-      printRunbookStashed(pos, this.writer);
-      return;
-    }
-
-    // Handle pop action with step data - render step block
-    if (event.action === 'pop' && event.data?.step && event.data.position) {
-      const pos = event.data.position as StepPosition;
-      const stepData = event.data.step as {
-        name: string;
-        description?: string;
-        prompted?: boolean;
-      };
-      // Create a minimal step object for printStepBlock
-      const step = { name: stepData.name, description: stepData.description } as Step;
-      printStepBlock(pos, step, stepData.prompted ?? false, this.writer);
-      return;
-    }
-
-    // Default: render message with success styling
     if (event.message) {
       this.writer.writeLine(success(event.message));
     }
@@ -756,6 +684,11 @@ export class TextRenderer implements OutputRenderer {
       },
       this.writer,
     );
+
+    // The one place the token is ever printed in text mode.
+    if (payload.ownerToken !== undefined) {
+      this.writer.writeLine(`Owner token: ${payload.ownerToken}`);
+    }
 
     printActionBlock({ action: 'START' }, this.writer);
   }

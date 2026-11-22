@@ -1,7 +1,7 @@
 // src/runbook/state-update-ops.ts
 import type { VariableValue } from './effective-vars.js';
 import type { FrameKey } from './targeting.js';
-import type { ResolvedCompletion, TemplateVarValue } from './types.js';
+import type { TemplateVarValue } from './types.js';
 
 /**
  * Shallow-merge the payload into the existing record. Caller-supplied keys
@@ -63,19 +63,9 @@ export type VariablesOp = MergeOp<VariableValue>;
 /**
  * Op shape accepted for `RunbookState.templateVars`. Replace-only because
  * template inputs are seeded once at run creation and only re-written
- * wholesale (e.g. by delegation snapshot writes carrying the full inherited
- * map). There is no partial-patch call site.
+ * wholesale. There is no partial-patch call site.
  */
 export type TemplateVarsOp = ReplaceOp<Readonly<Record<string, TemplateVarValue>>>;
-
-/**
- * Op shape accepted for `RunbookState.resolvedCompletions`. `recordCompletion`
- * adds one entry (merge); `consumeResolvedCompletion` removes a key, which is
- * a wholesale replace at the field level.
- */
-export type ResolvedCompletionsOp =
-  | MergeOp<ResolvedCompletion>
-  | ReplaceOp<Readonly<Record<string, ResolvedCompletion>>>;
 
 /**
  * Op shape accepted for `RunbookState.frameEntryCounts`. Replace-only — the only

@@ -39,7 +39,6 @@ function validStateWithVariables(variables: Record<string, unknown>): Record<str
     templateVars: {},
     prompted: false,
     steps: [{ id: '1', status: 'running' }],
-    resolvedCompletions: {},
     frameEntryCounts: {},
     startedAt: '2026-05-25T00:00:00.000Z',
     updatedAt: '2026-05-25T00:00:00.000Z',

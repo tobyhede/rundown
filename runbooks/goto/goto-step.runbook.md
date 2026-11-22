@@ -9,8 +9,8 @@ scenarios:
     description: Pass step 1 (GOTO 3), pass step 3
     commands:
       - rd run --prompted goto-step.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 3
     result: COMPLETE
 ---
 

@@ -43,7 +43,7 @@ describe('core public surface — entry-seam internals', () => {
     { barrel: 'src/index.js', mod: coreBarrel },
     { barrel: 'src/events/index.js', mod: eventsBarrel },
   ])('still re-exports the public observation helpers from $barrel', ({ mod }) => {
-    expect(Object.hasOwn(mod, 'projectDelegateFrontier')).toBe(true);
+    expect(Object.hasOwn(mod, 'commandStartedEffect')).toBe(true);
     expect(Object.hasOwn(mod, 'createExecutionEffectCollector')).toBe(true);
   });
 

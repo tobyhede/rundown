@@ -520,7 +520,7 @@ describe('executeScenario', () => {
       terminalResult: 'COMPLETE',
       transitions: [],
       capturedTokens: [],
-      capturedClaimIds: [],
+      capturedRunIds: [],
       errors: [],
       warnings: [],
       artifactEntries: [],

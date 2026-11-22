@@ -315,6 +315,15 @@ Use bare `- DELEGATE` to delegate a step or substep. `DELEGATE value` is invalid
 
 An H2 `DELEGATE` propagates to its substeps. Delegated targets must resolve to runbooks; do not use delegation for arbitrary files or commands.
 
+### Composition in this build
+
+Composition is valid syntax, but this build runs standalone runbooks only. A
+runbook with a runbook-list substep (child runbook paths listed in a step body),
+with or without `- DELEGATE`, parses, yet `rundown run` refuses it with
+`RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run. Inline composition returns
+in #903 and delegation in #904. Until then, make each leaf runnable on its own,
+and tell the user that a composing parent cannot run yet.
+
 ## FOR Loops
 
 Repeat a step across iterations:
@@ -384,7 +393,7 @@ runbook and hand off to `running-runbooks`.
 The orchestrating agent loads the execution protocol *first*, then starts the
 runbook — the skill instructs, the agent runs `rundown run`. Loading the protocol
 before the run is deliberate: the agent must be ready to interpret the first
-step's output (including a delegation) the moment it appears, not scramble for
+step's output the moment it appears, not scramble for
 the protocol after `rundown run` has already fired. Nothing auto-starts a runbook
 behind the agent's back.
 
@@ -409,8 +418,7 @@ description: Use when <the user need this runbook serves, in trigger terms>.
 Load the execution protocol *before* starting the runbook:
 
 1. `Skill(skill: "rundown:running-runbooks")` — always.
-2. `Skill(skill: "rundown:delegating-runbooks")` — only if this runbook contains a `- DELEGATE` step.
-3. Then start it: `rundown run <runbook-name>`
+2. Then start it: `rundown run <runbook-name>`
 </important>
 
 <One or two sentences: what this runbook does and when to reach for it.>
@@ -439,7 +447,7 @@ Decide which skills the bootstrap skill references by what the runbook contains:
 | If the runbook… | Reference |
 |-----------------|-----------|
 | (always) | [running-runbooks](../running-runbooks/SKILL.md) — the execution protocol |
-| contains a `- DELEGATE` directive | [delegating-runbooks](../delegating-runbooks/SKILL.md) |
+| composes other runbooks (a runbook-list substep or `- DELEGATE`) | No skill: state in the `<important>` block that `rundown run` refuses it until #903 / #904 (see [Composition in this build](#composition-in-this-build) and the [planning](../planning/SKILL.md) skill) |
 | writes, reviews, or executes a plan (plan pipeline) | [writing-plans](../writing-plans/SKILL.md) / [executing-plans](../executing-plans/SKILL.md) |
 
 Extend this table as new craft skills are added. The rule: reference the skill

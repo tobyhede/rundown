@@ -18,8 +18,6 @@ Commander program. For the user guide, see [cli.md](cli.md).
   - [`rundown status`](#rundown-status)
   - [`rundown stop`](#rundown-stop)
   - [`rundown ls`](#rundown-ls)
-  - [`rundown stash`](#rundown-stash)
-  - [`rundown pop`](#rundown-pop)
   - [`rundown echo`](#rundown-echo)
   - [`rundown check`](#rundown-check)
   - [`rundown resolve`](#rundown-resolve)
@@ -33,10 +31,6 @@ Commander program. For the user guide, see [cli.md](cli.md).
     - [`rundown scenario-suite ls`](#rundown-scenario-suite-ls)
     - [`rundown scenario-suite show`](#rundown-scenario-suite-show)
     - [`rundown scenario-suite run`](#rundown-scenario-suite-run)
-  - [`rundown delegate`](#rundown-delegate)
-  - [`rundown claim`](#rundown-claim)
-  - [`rundown abort`](#rundown-abort)
-  - [`rundown collect`](#rundown-collect)
   - [`rundown artifact`](#rundown-artifact)
     - [`rundown artifact ls`](#rundown-artifact-ls)
     - [`rundown artifact path`](#rundown-artifact-path)
@@ -84,32 +78,23 @@ Commands:
                                 transition)
   fail|no [options]             Mark current step as failed (triggers FAIL
                                 transition)
-  complete [options] [message]  Force early completion of current runbook
+  complete [options] [message]  Force early completion of a running runbook
                                 (runbooks auto-complete on final step)
   goto [options] <step>         Jump to specific step (e.g., "3" or "3.1" for
                                 substep)
-  status [options]              Show current runbook state
-  stop [options] [message]      Abort current runbook
-  ls [options]                  List runbooks (active by default, --all for
+  status [options]              Show run state (all runs, or one run with --run)
+  stop [options] [message]      Abort a running runbook
+  ls [options]                  List runbooks (runs by default, --all for
                                 available)
-  stash [options]               Pause runbook enforcement, preserve state
-  pop [options]                 Resume enforcement from stashed runbook
   echo [options] [command...]   Echo command for runbook testing
   check [options] <file>        Check a runbook file for errors
   resolve [options] <file>      Resolve and validate runbook variables and data
                                 sources
-  prune [options]               Remove runbook state (does not delete runbook
-                                files)
+  prune [options]               Remove run state (does not delete runbook files)
   prompt [options] <content>    Output content wrapped in markdown fences
   scenario                      List, show, or run scenarios from a runbook
   scenario-suite                List, show, or run cases from a scenario suite
                                 file
-  delegate [options] [runbook]  Create a delegation token for a child runbook
-  claim [options] <token>       Claim a delegation token and launch the child
-                                runbook
-  abort [options] <token>       Cancel a delegation token
-  collect [options]             Collect delegation results and fire aggregation
-                                transition
   artifact                      Inspect Rundown artifact aliases
   help [command]                display help for command
 ```
@@ -124,8 +109,8 @@ Start a runbook
 Options:
   --prompted                   Prompted mode: show commands without
                                auto-executing
-  --step <stepId>              Link child to parent substep (or jump to step
-                               with --prompted)
+  --step <stepId>              Jump to a step after starting (requires
+                               --prompted)
   --index <number>             FOR loop iteration to target (requires --step)
   --text                       Output execution events as human-readable text
   -h, --help                   display help for command
@@ -151,12 +136,12 @@ Usage: rundown pass|yes [options]
 Mark current step as passed (triggers PASS transition)
 
 Options:
-  --step <stepId>       Target specific substep
-  --index <number>      FOR loop iteration to target (requires --step)
-  --claim-id <claimId>  Target a claimed delegated child runbook
-  --run <runId>         Target a runbook by run id
-  --text                Output as human-readable text
-  -h, --help            display help for command
+  --token <token>   Owner token of the run to mutate (owner_token from
+                    runbook_started)
+  --step <stepId>   Current step or substep position (required, e.g. 2 or 2.1)
+  --index <number>  Current FOR loop iteration (requires --step)
+  --text            Output as human-readable text
+  -h, --help        display help for command
 ```
 
 ### `rundown fail`
@@ -167,12 +152,12 @@ Usage: rundown fail|no [options]
 Mark current step as failed (triggers FAIL transition)
 
 Options:
-  --step <stepId>       Target specific substep
-  --index <number>      FOR loop iteration to target (requires --step)
-  --claim-id <claimId>  Target a claimed delegated child runbook
-  --run <runId>         Target a runbook by run id
-  --text                Output as human-readable text
-  -h, --help            display help for command
+  --token <token>   Owner token of the run to mutate (owner_token from
+                    runbook_started)
+  --step <stepId>   Current step or substep position (required, e.g. 2 or 2.1)
+  --index <number>  Current FOR loop iteration (requires --step)
+  --text            Output as human-readable text
+  -h, --help        display help for command
 ```
 
 ### `rundown complete`
@@ -180,16 +165,17 @@ Options:
 ```text
 Usage: rundown complete [options] [message]
 
-Force early completion of current runbook (runbooks auto-complete on final step)
+Force early completion of a running runbook (runbooks auto-complete on final
+step)
 
 Arguments:
-  message               Completion message
+  message          Completion message
 
 Options:
-  --claim-id <claimId>  Target a claimed delegated child runbook
-  --run <runId>         Target a runbook by run id
-  --text                Output as human-readable text
-  -h, --help            display help for command
+  --token <token>  Owner token of the run to mutate (owner_token from
+                   runbook_started)
+  --text           Output as human-readable text
+  -h, --help       display help for command
 ```
 
 ### `rundown goto`
@@ -200,11 +186,11 @@ Usage: rundown goto [options] <step>
 Jump to specific step (e.g., "3" or "3.1" for substep)
 
 Options:
-  --index <number>      FOR loop iteration to target
-  --claim-id <claimId>  Target a claimed delegated child runbook
-  --run <runId>         Target a runbook by run id
-  --text                Output as human-readable text
-  -h, --help            display help for command
+  --index <number>  FOR loop iteration to target
+  --token <token>   Owner token of the run to mutate (owner_token from
+                    runbook_started)
+  --text            Output as human-readable text
+  -h, --help        display help for command
 ```
 
 ### `rundown status`
@@ -212,12 +198,12 @@ Options:
 ```text
 Usage: rundown status [options]
 
-Show current runbook state
+Show run state (all runs, or one run with --run)
 
 Options:
-  --claim-id <claimId>  Target a claimed delegated child runbook
-  --text                Output as human-readable text
-  -h, --help            display help for command
+  --run <runId>  Show one run in detail
+  --text         Output as human-readable text
+  -h, --help     display help for command
 ```
 
 ### `rundown stop`
@@ -225,16 +211,16 @@ Options:
 ```text
 Usage: rundown stop [options] [message]
 
-Abort current runbook
+Abort a running runbook
 
 Arguments:
-  message               Stop message
+  message          Stop message
 
 Options:
-  --claim-id <claimId>  Target a claimed delegated child runbook
-  --run <runId>         Target a runbook by run id
-  --text                Output as human-readable text
-  -h, --help            display help for command
+  --token <token>  Owner token of the run to mutate (owner_token from
+                   runbook_started)
+  --text           Output as human-readable text
+  -h, --help       display help for command
 ```
 
 ### `rundown ls`
@@ -242,39 +228,13 @@ Options:
 ```text
 Usage: rundown ls [options]
 
-List runbooks (active by default, --all for available)
+List runbooks (runs by default, --all for available)
 
 Options:
   -a, --all      List all available runbook files
   --text         Output as human-readable text
   --tags <tags>  Filter available runbooks by comma-separated tags
   -h, --help     display help for command
-```
-
-### `rundown stash`
-
-```text
-Usage: rundown stash [options]
-
-Pause runbook enforcement, preserve state
-
-Options:
-  --claim-id <claimId>  Target a claimed delegated child runbook
-  --text                Output as human-readable text
-  -h, --help            display help for command
-```
-
-### `rundown pop`
-
-```text
-Usage: rundown pop [options]
-
-Resume enforcement from stashed runbook
-
-Options:
-  --claim-id <claimId>  Target a claimed delegated child runbook
-  --text                Output as human-readable text
-  -h, --help            display help for command
 ```
 
 ### `rundown echo`
@@ -331,17 +291,19 @@ Options:
 ```text
 Usage: rundown prune [options]
 
-Remove runbook state (does not delete runbook files)
+Remove run state (does not delete runbook files)
 
 Options:
-  --dry-run    Show what would be removed without deleting
-  --completed  Prune successfully completed runbook state
-  --stopped    Prune stopped (aborted/failed) runbook state
-  --active     Prune active runbook state
-  --inactive   Prune inactive (orphaned) runbook state
-  --all        Prune all runbook state
-  --text       Output as human-readable text
-  -h, --help   display help for command
+  --token <token>  Owner token of the run to mutate (owner_token from
+                   runbook_started); deletes that one running run
+  --dry-run        Show what would be removed without deleting
+  --completed      Prune successfully completed run state
+  --stopped        Prune stopped (aborted/failed) run state
+  --active         Prune running run state (each running run needs its --token)
+  --inactive       Prune invalid or abandoned run state
+  --all            Prune all run state
+  --text           Output as human-readable text
+  -h, --help       display help for command
 ```
 
 ### `rundown prompt`
@@ -467,96 +429,6 @@ Options:
   -h, --help   display help for command
 ```
 
-### `rundown delegate`
-
-```text
-Usage: rundown delegate [options] [runbook]
-
-Create a delegation token for a child runbook
-
-Options:
-  --step <stepId>              Step to delegate (e.g., 1.1 or 1.2.1 for
-                               step.iteration.substep)
-  --index <number>             FOR loop iteration to target (requires --step)
-  --retry                      Retry an existing delegation: cancel and re-issue
-                               with a fresh token
-  --claim-id <claimId>         Bearer authority for the run that issues the
-                               delegation
-  --run <runId>                Select the target run (selector only; authority
-                               comes from --claim-id)
-  --text                       Output as human-readable text
-  -h, --help                   display help for command
-
-Input options:
-  --input <key=value>          Set input for child context (repeatable, omit
-                               =value to inherit from env) (default: [])
-  --input-json <key=json>      Set input with JSON value (repeatable) (default:
-                               [])
-  --input-file <path>          Load inputs from YAML file (repeatable) (default:
-                               [])
-  --artifacts <key=uri>        Supply an input artifact by rd:// URI
-                               (repeatable) (default: [])
-  --artifacts-json <key=json>  Supply input artifacts as a JSON array of rd://
-                               URIs (repeatable) (default: [])
-```
-
-### `rundown claim`
-
-```text
-Usage: rundown claim [options] <token>
-
-Claim a delegation token and launch the child runbook
-
-Options:
-  --text                       Output as human-readable text
-  -h, --help                   display help for command
-
-Input options:
-  --input-file <path>          Load inputs from YAML file (repeatable) (default:
-                               [])
-  --input <key=value>          Set input (repeatable, omit =value to inherit
-                               from env) (default: [])
-  --input-json <key=json>      Set input with JSON value (repeatable) (default:
-                               [])
-  --artifacts <key=uri>        Supply an input artifact by rd:// URI
-                               (repeatable) (default: [])
-  --artifacts-json <key=json>  Supply input artifacts as a JSON array of rd://
-                               URIs (repeatable) (default: [])
-```
-
-### `rundown abort`
-
-```text
-Usage: rundown abort [options] <token>
-
-Cancel a delegation token
-
-Options:
-  --claim-id <claimId>  Bearer authority for the parent run that owns the
-                        delegation
-  --force               Force cancel even if delegation is claimed (stops child
-                        run)
-  --text                Output as human-readable text
-  -h, --help            display help for command
-```
-
-### `rundown collect`
-
-```text
-Usage: rundown collect [options]
-
-Collect delegation results and fire aggregation transition
-
-Options:
-  --step <stepId>       Target specific DELEGATE step scope (e.g., "1" or "1.2")
-  --index <number>      FOR loop iteration to target (requires --step on a FOR
-                        step)
-  --claim-id <claimId>  Target a claimed delegated child runbook
-  --run <runId>         Target a runbook by run id
-  --text                Output as human-readable text
-  -h, --help            display help for command
-```
-
 ### `rundown artifact`
 
 ```text
@@ -581,8 +453,9 @@ Commands:
 Usage: rundown artifact ls [options]
 
 Options:
-  --text      Output as human-readable text
-  -h, --help  display help for command
+  --run <runId>  Run to inspect (defaults to the single running run)
+  --text         Output as human-readable text
+  -h, --help     display help for command
 ```
 
 #### `rundown artifact path`
@@ -591,8 +464,9 @@ Options:
 Usage: rundown artifact path [options] <alias-or-uri>
 
 Options:
-  --text      Output as human-readable text
-  -h, --help  display help for command
+  --run <runId>  Run to inspect (defaults to the single running run)
+  --text         Output as human-readable text
+  -h, --help     display help for command
 ```
 
 #### `rundown artifact uri`
@@ -601,8 +475,9 @@ Options:
 Usage: rundown artifact uri [options] <alias>
 
 Options:
-  --text      Output as human-readable text
-  -h, --help  display help for command
+  --run <runId>  Run to inspect (defaults to the single running run)
+  --text         Output as human-readable text
+  -h, --help     display help for command
 ```
 
 #### `rundown artifact inspect`
@@ -611,6 +486,7 @@ Options:
 Usage: rundown artifact inspect [options] <alias-or-uri>
 
 Options:
-  --text      Output as human-readable text
-  -h, --help  display help for command
+  --run <runId>  Run to inspect (defaults to the single running run)
+  --text         Output as human-readable text
+  -h, --help     display help for command
 ```

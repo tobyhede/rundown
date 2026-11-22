@@ -10,17 +10,17 @@ scenarios:
     description: Pass all substeps and final step
     commands:
       - rd run --prompted substep-pass-fail.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   fail-continues:
     description: Fail optional substep 1.2 but continue to step 2
     commands:
       - rd run --prompted substep-pass-fail.runbook.md
-      - rd pass
-      - rd fail
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd fail --token ${TOKEN} --step 1.2
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

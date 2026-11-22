@@ -8,7 +8,7 @@
 
 import type { ExecutionResult } from '@rundown-org/core';
 import { promises as fs } from 'node:fs';
-import { executeEchoLogic, toExecutionResult } from '../helpers/echo-command.js';
+import { RUN_ID_ENV, executeEchoLogic, toExecutionResult } from '../helpers/echo-command.js';
 
 /**
  * Check if a command is an rd/rundown command that can be handled internally.
@@ -143,7 +143,14 @@ async function executeEchoInternal(
   const commandArgs = remaining.filter((arg) => arg !== '--text');
 
   // Use shared echo logic
-  const result = await executeEchoLogic(results, commandArgs, cwd);
+  // The invoking run travels in the injected env, exactly as a spawned
+  // `rd echo` would read it from `process.env`.
+  const result = await executeEchoLogic(
+    results,
+    commandArgs,
+    cwd,
+    rdInjected?.[RUN_ID_ENV] ?? process.env[RUN_ID_ENV],
+  );
   const output = result.output;
 
   if (output && rdInjected) {

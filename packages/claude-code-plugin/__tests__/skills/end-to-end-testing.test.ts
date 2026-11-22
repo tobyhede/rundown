@@ -30,51 +30,34 @@ describe('end-to-end-testing skill', () => {
     expect(skill).not.toMatch(/npm install|npm run build|installation|Local Setup/i);
   });
 
-  it('describes the claimed-child delegation flow', () => {
+  it('reports the composition refusal instead of improvising', () => {
     const skill = readSkill();
 
-    // The DELEGATE step auto-issues the token; the agent claims it directly.
-    expect(skill).toContain('rundown claim <token>');
-    expect(skill).toMatch(/auto-issues a claim token/i);
+    expect(skill).toContain('`RUNBOOK_COMPOSITION_UNSUPPORTED`');
+    expect(skill).toContain('#903');
+    expect(skill).toContain('#904');
+    expect(skill).toMatch(/Report the refusal to the user as the result and stop/);
   });
 
-  it('directs claimed children to advance with claim-id-targeted transitions', () => {
+  it('drives steps with the owner token, never retired authority', () => {
     const skill = readSkill();
 
-    // Claimed children — including prompted ones — advance and report their
-    // result with claim-id-targeted transitions, matching running-runbooks.
-    expect(skill).toContain('rundown pass --claim-id <claim_id>');
-    expect(skill).toContain('rundown fail --claim-id <claim_id>');
-    // It must NOT claim that claim-id targeting is only for early-stopped
-    // children — prompted claimed children need it to advance at all.
-    expect(skill).not.toMatch(/only for a child you stop early/i);
-    expect(skill).not.toMatch(/reserved for stopped children/i);
-    // On a delegation-exposed run a bare pass/fail is refused (ACTOR_CONTEXT_REQUIRED),
-    // not silently routed to the parent; the child must name its --claim-id lane.
-    expect(skill).toMatch(
-      /bare `rundown pass`\/`rundown fail` is refused with `ACTOR_CONTEXT_REQUIRED`/i,
-    );
-  });
-
-  it('describes report-then-collect instead of child-driven parent aggregation', () => {
-    const skill = readSkill();
-
-    expect(skill).toContain('the child reports its result to the delegation linkage');
-    expect(skill).toContain('stops driving the parent');
-    expect(skill).toContain('rundown collect --claim-id <parent_claim_id>');
-    expect(skill).not.toMatch(/auto-resolves its parent substep/i);
-    expect(skill).not.toMatch(/parent auto-aggregates and advances/i);
+    expect(skill).toContain('`--token <owner_token>`');
+    expect(skill).toContain('`--step <position>`');
+    expect(skill).not.toContain('--claim-id');
+    expect(skill).not.toMatch(/rundown (?:claim|collect)\b/);
   });
 
   it('uses transition output as the normal agent context', () => {
     const skill = readSkill();
 
     expect(skill).toContain('Use default JSON output');
-    expect(skill).toContain(
-      'Treat `rundown run`, `rundown pass`, `rundown fail`, `rundown claim`, and `rundown collect` output as the next context',
+    // Prose is wrapped, so match across the line break.
+    expect(skill).toMatch(
+      /Treat `rundown run`, `rundown pass`, and `rundown fail` output as the next\s+context/,
     );
-    expect(skill).toContain(
-      'Use `rundown status` only to recover orientation after an error or interruption',
+    expect(skill).toMatch(
+      /Use `rundown status --run <run_id>` only to recover orientation after an error\s+or interruption/,
     );
     expect(skill).not.toContain('rundown status --text');
   });
@@ -82,10 +65,6 @@ describe('end-to-end-testing skill', () => {
   it('stays terse for agent use', () => {
     const wordCount = readSkill().trim().split(/\s+/u).length;
 
-    // Cap raised 350 -> 400 in the R2 explicit-targeting migration: the post-R1
-    // refusal model (ACTOR_CONTEXT_REQUIRED, sticky exposure, --run/--claim-id
-    // lane split) is load-bearing agent guidance and cannot be expressed within
-    // the old budget without dropping correctness.
     expect(wordCount).toBeLessThanOrEqual(400);
   });
 });

@@ -6,7 +6,6 @@ import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { InvalidRunbookStateError } from '../../src/runbook/state.js';
 import { WORK_DIR } from '../../src/paths.js';
 import {
-  brandEffectiveVarsForTest,
   brandInitialTemplateVarsForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
@@ -19,7 +18,7 @@ import {
   makeSubstep,
 } from '../helpers/step-factories.js';
 
-import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/persisted-state-guards.js';
 
 const runId = assertRunId(`rd_${'1'.repeat(32)}`);
 const CONTEXT_ID = 'ctx-entry';
@@ -79,7 +78,6 @@ function state(overrides: Partial<RunbookState> = {}): RunbookState {
     activeEntry: 1,
     frameEntryCounts: { [buildFrameKey('1')]: 1 },
     substepStates: [],
-    resolvedCompletions: {},
     schemaVersion: CURRENT_SCHEMA_VERSION,
     frontmatterOutputs: [],
     ...overrides,
@@ -479,122 +477,6 @@ describe('deriveExecutionUnitEntry', () => {
       );
 
       expect(payloadOf(entered).stepName).toBe('1');
-    });
-  });
-
-  describe('inline launch', () => {
-    const inlineSteps = [
-      makeResolvedStepWithSubsteps({
-        substeps: [makeSubstep({ id: '1', description: 'Inline child' })],
-      }),
-    ];
-    const frameKey = buildFrameKey('1');
-
-    /** A persisted intent naming this run's step 1 / substep 1 at the active frame. */
-    function intent(overrides: Record<string, unknown> = {}) {
-      return {
-        parentRunId: runId,
-        parentStepId: '1',
-        parentStep: '1',
-        parentFrameKey: frameKey,
-        childRunId: assertRunId(`rd_${'2'.repeat(32)}`),
-        childRunbookPath: 'child.runbook.md',
-        childRunbookRef: { source: 'project', path: 'child.runbook.md' },
-        contextSnapshot: {
-          vars: brandEffectiveVarsForTest({}),
-          ancestors: [],
-          step: '1',
-          substep: '1',
-          at: '1.1',
-        },
-        ...overrides,
-      };
-    }
-
-    /** Enter substep 1 with the given persisted inline-launch intent. */
-    function enterWithIntent(inlineLaunchIntent: unknown, overrides: Partial<RunbookState> = {}) {
-      return enter(
-        inlineSteps,
-        state({ substep: '1', snapshot: { context: { inlineLaunchIntent } }, ...overrides }),
-      );
-    }
-
-    it('classifies inline-launch and carries the intent with its parent entry', () => {
-      const entered = enterWithIntent(intent());
-
-      expect(entered.kind).toBe('inline-launch');
-      if (entered.kind !== 'inline-launch') throw new Error('unreachable');
-      expect(entered.launch).toMatchObject({
-        parentStepId: '1',
-        parentFrameKey: frameKey,
-        // Stamped from the run's own frame counter, not from the intent — the
-        // intent is written before the entry it belongs to is observed.
-        parentEntry: 1,
-      });
-      expect(payloadOf(entered).inlineLaunch).toMatchObject({ parentEntry: 1 });
-    });
-
-    it('ignores a persisted value that is not a launch intent', () => {
-      const entered = enterWithIntent({ nonsense: true });
-
-      expect(entered.kind).toBe('awaiting');
-      expect(payloadOf(entered).inlineLaunch).toBeUndefined();
-    });
-
-    it('ignores an intent naming another run', () => {
-      expect(
-        enterWithIntent(intent({ parentRunId: assertRunId(`rd_${'9'.repeat(32)}`) })).kind,
-      ).toBe('awaiting');
-    });
-
-    it('ignores an intent naming another step', () => {
-      expect(enterWithIntent(intent({ parentStep: '2' })).kind).toBe('awaiting');
-    });
-
-    it('ignores an intent naming another substep', () => {
-      expect(enterWithIntent(intent({ parentStepId: '2' })).kind).toBe('awaiting');
-    });
-
-    it('ignores an intent whose authored frame is no longer open', () => {
-      // Openness flows from the frame stack, never from the monotonic entry
-      // counter — whose keys persist after a loop advances, and would otherwise
-      // re-project a stale prior-iteration intent onto the current frame.
-      const entered = enterWithIntent(intent({ parentFrameKey: buildFrameKey('1', 4) }), {
-        activeFrameKey: frameKey,
-        frameEntryCounts: { [buildFrameKey('1')]: 1, [buildFrameKey('1', 4)]: 3 },
-      });
-
-      expect(entered.kind).toBe('awaiting');
-    });
-
-    it('does not project an intent onto a cursor that resolves to the parent step', () => {
-      // `substepId` and `isSubstep` both come off the resolved unit, so a cursor
-      // naming no live substep is not the substep the intent addresses.
-      const entered = enter(
-        inlineSteps,
-        state({ substep: '9', snapshot: { context: { inlineLaunchIntent: intent() } } }),
-      );
-
-      expect(entered.kind).toBe('awaiting');
-    });
-  });
-
-  describe('delegation bearers', () => {
-    const frontier = [{ id: '1.1', runbook: 'child.md', token: 'rdtk_example' }];
-
-    it('discloses the supplied bearers on the entry payload', () => {
-      const entered = deriveExecutionUnitEntry({
-        state: state(),
-        steps: [commandStep],
-        delegateFrontier: frontier,
-        cwd: CWD,
-      });
-
-      expect(payloadOf(entered).delegateFrontier).toEqual(frontier);
-    });
-
-    it('carries no frontier on an ordinary entry', () => {
-      expect(payloadOf(enter([commandStep])).delegateFrontier).toBeUndefined();
     });
   });
 

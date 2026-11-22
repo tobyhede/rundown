@@ -3,10 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
+import { generateOwnerToken, hashRunSecret } from '../../src/runbook/run-secrets.js';
 import { applyOp, merge, replace } from '../../src/runbook/state-update-ops.js';
 import type { MergeOp, ReplaceOp } from '../../src/runbook/state-update-ops.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import type { Runbook, ResolvedCompletion } from '../../src/runbook/types.js';
+import type { Runbook } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 
 describe('RunbookStateManager.update() — per-field op semantics', () => {
@@ -30,6 +31,7 @@ describe('RunbookStateManager.update() — per-field op semantics', () => {
   async function freshState() {
     return manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
       runbookPath: 'test.runbook.md',
+      ownerTokenHash: hashRunSecret(generateOwnerToken()),
     });
   }
 
@@ -69,6 +71,7 @@ describe('RunbookStateManager.update() — per-field op semantics', () => {
         mockRunbook,
         {
           runbookPath: 'test.runbook.md',
+          ownerTokenHash: hashRunSecret(generateOwnerToken()),
           templateVars: { x: '1', y: '2' },
         },
       );
@@ -84,6 +87,7 @@ describe('RunbookStateManager.update() — per-field op semantics', () => {
         mockRunbook,
         {
           runbookPath: 'test.runbook.md',
+          ownerTokenHash: hashRunSecret(generateOwnerToken()),
           templateVars: { x: '1', y: '2' },
         },
       );
@@ -91,54 +95,6 @@ describe('RunbookStateManager.update() — per-field op semantics', () => {
 
       const loaded = await manager.load(state.id);
       expect(loaded?.templateVars).toEqual({ x: '1', y: '2' });
-    });
-  });
-
-  describe('resolvedCompletions — merge ∪ replace', () => {
-    function makeCompletion(agentId: string): ResolvedCompletion {
-      return {
-        agentId,
-        result: 'pass',
-        targetStep: '1',
-        targetFrameKey: buildFrameKey('1'),
-        targetEntry: 1,
-        completedAt: '2026-05-07T00:00:00.000Z',
-      };
-    }
-
-    it('merge() adds one entry without wiping existing', async () => {
-      const state = await freshState();
-      const first = makeCompletion('agent-1');
-      const second = makeCompletion('agent-2');
-
-      await manager.update(state.id, {
-        resolvedCompletions: merge({ 'k1|1|': first }),
-      });
-      await manager.update(state.id, {
-        resolvedCompletions: merge({ 'k2|1|': second }),
-      });
-
-      const loaded = await manager.load(state.id);
-      expect(loaded?.resolvedCompletions).toEqual({
-        'k1|1|': first,
-        'k2|1|': second,
-      });
-    });
-
-    it('replace() wipes existing keys', async () => {
-      const state = await freshState();
-      const first = makeCompletion('agent-1');
-      const second = makeCompletion('agent-2');
-
-      await manager.update(state.id, {
-        resolvedCompletions: merge({ 'k1|1|': first }),
-      });
-      await manager.update(state.id, {
-        resolvedCompletions: replace({ 'k2|1|': second }),
-      });
-
-      const loaded = await manager.load(state.id);
-      expect(loaded?.resolvedCompletions).toEqual({ 'k2|1|': second });
     });
   });
 

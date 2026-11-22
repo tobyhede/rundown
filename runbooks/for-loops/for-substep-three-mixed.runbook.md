@@ -13,13 +13,13 @@ scenarios:
     description: Middle CONTINUE substep fails, surrounding DEFER substeps pass
     commands:
       - rd run --prompted for-substep-three-mixed.runbook.md
-      - rd pass
-      - rd fail
-      - rd pass
-      - rd pass
-      - rd fail
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.2 --index 1
+      - rd pass --token ${TOKEN} --step 1.3 --index 1
+      - rd pass --token ${TOKEN} --step 1.1 --index 2
+      - rd fail --token ${TOKEN} --step 1.2 --index 2
+      - rd pass --token ${TOKEN} --step 1.3 --index 2
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

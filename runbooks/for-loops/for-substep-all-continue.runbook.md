@@ -13,11 +13,11 @@ scenarios:
     description: All substeps fail but CONTINUE is invisible, vacuous pass still propagates
     commands:
       - rd run --prompted for-substep-all-continue.runbook.md
-      - rd fail
-      - rd fail
-      - rd fail
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.2 --index 1
+      - rd fail --token ${TOKEN} --step 1.1 --index 2
+      - rd fail --token ${TOKEN} --step 1.2 --index 2
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

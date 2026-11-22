@@ -10,8 +10,6 @@ import { registerCompleteCommand } from './commands/complete.js';
 import { registerStatusCommand } from './commands/status.js';
 import { registerStopCommand } from './commands/stop.js';
 import { registerLsCommand } from './commands/ls.js';
-import { registerStashCommand } from './commands/stash.js';
-import { registerPopCommand } from './commands/pop.js';
 import { registerEchoCommand } from './commands/echo.js';
 import { registerCheckCommand } from './commands/check.js';
 import { registerResolveCommand } from './commands/resolve.js';
@@ -19,10 +17,6 @@ import { registerPruneCommand } from './commands/prune.js';
 import { registerPromptCommand } from './commands/prompt.js';
 import { registerScenariosCommand } from './commands/scenarios.js';
 import { registerScenarioSuiteCommand } from './commands/scenario-suite.js';
-import { registerDelegateCommand } from './commands/delegate.js';
-import { registerClaimCommand } from './commands/claim.js';
-import { registerAbortCommand } from './commands/abort.js';
-import { registerCollectCommand } from './commands/collect.js';
 import { registerArtifactCommand } from './commands/artifact.js';
 import { PolicyConfigTrustRequiredError, isError, setColorEnabled } from '@rundown-org/core';
 import {
@@ -191,8 +185,6 @@ export function createProgram(): Command {
   registerStatusCommand(program);
   registerStopCommand(program);
   registerLsCommand(program);
-  registerStashCommand(program);
-  registerPopCommand(program);
   registerEchoCommand(program);
   registerCheckCommand(program);
   registerResolveCommand(program);
@@ -200,10 +192,6 @@ export function createProgram(): Command {
   registerPromptCommand(program);
   registerScenariosCommand(program);
   registerScenarioSuiteCommand(program);
-  registerDelegateCommand(program);
-  registerClaimCommand(program);
-  registerAbortCommand(program);
-  registerCollectCommand(program);
   registerArtifactCommand(program);
 
   return program;

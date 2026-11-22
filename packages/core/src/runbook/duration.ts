@@ -7,8 +7,8 @@
  * built `.d.ts` — plan 3's humaniser consumes `DurationMs` across that boundary.
  *
  * Deliberately NOT the `{ readonly __brand: 'DurationMs' }` form: that appears
- * exactly ONCE in `packages/core/src` (`targeting.ts:20`), where the same file
- * also uses `__brand` as a real RUNTIME property (`:259`, `:290`) — so it is not
+ * exactly ONCE in `packages/core/src` (`targeting.ts:18`), where the same file
+ * also uses `__brand` as a real RUNTIME property (`:270`, set at `:301`) — so it is not
  * even a pure type brand there. Every other branded primitive in core uses a
  * unique symbol. A literal brand is also structurally forgeable by any module
  * that declares the same string; a symbol brand is not.
@@ -26,16 +26,16 @@ export type DurationMs = number & { readonly [durationMsBrand]: true };
 /**
  * Assert a raw millisecond count is a valid {@link DurationMs} and brand it.
  *
- * Named `assert*` to match every sibling brand seam — `assertRunId`
- * (`run-id.ts:29`), `assertClaimLookupKey` (`claim-id.ts:234`),
- * `assertDelegationTokenHash` (`delegation-token.ts:137`) — all of which take an
- * unbranded primitive, validate, throw on failure, and return the identical value
- * branded. This does exactly that, so it carries exactly that name.
+ * Named `assert*` to match the sibling brand seams — `assertRunId`
+ * (`run-id.ts:66`) and `assertStateVersion` (`storage/mutation-result.ts:29`) —
+ * both of which take an unbranded primitive, validate, throw on failure, and
+ * return the identical value branded. This does exactly that, so it carries
+ * exactly that name.
  *
  * @param value - Non-negative, finite millisecond count.
  * @returns The branded duration.
  * @throws {RangeError} When `value` is negative, `NaN`, or infinite. A `RangeError`
- *   (not a bare `Error`) per `assertPositiveEntry` (`targeting.ts:44-48`), the
+ *   (not a bare `Error`) per `assertPositiveEntry` (`targeting.ts:42-46`), the
  *   repo's precedent for a caller-precondition violation: this is a code bug, not
  *   bad persisted data, and the read boundaries in plan 3 discriminate it from
  *   corrupt data BY TYPE rather than by message substring.

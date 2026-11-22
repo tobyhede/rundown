@@ -18,7 +18,7 @@ import type { FrameKey } from './targeting.js';
  * the active `frameKey` whose substep index is `>= index(fromSubstepId)` is
  * reset to `{ status: 'pending' }` with any prior `result` removed. Rows in
  * other frames, and rows before `fromSubstepId`, are returned untouched.
- * Non-status/result fields (notably `delegation`, `inline`) are preserved.
+ * Non-status/result fields are preserved.
  *
  * Pure: no machine, service, or CLI awareness. Category B (computation over
  * context) per `CLAUDE.md`.

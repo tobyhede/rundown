@@ -11,30 +11,30 @@ scenarios:
     description: Tests successful completion through all steps
     commands:
       - rd run --prompted named-step-recovery-loop.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
+      - rd pass --token ${TOKEN} --step 3
     result: COMPLETE
 
   error-recovery:
     description: Tests error handling and recovery by going back to setup
     commands:
       - rd run --prompted named-step-recovery-loop.runbook.md
-      - rd pass
-      - rd fail
-      - rd pass
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 2
+      - rd pass --token ${TOKEN} --step ErrorHandler
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
+      - rd pass --token ${TOKEN} --step 3
     result: COMPLETE
 
   unrecoverable-error:
     description: Tests unrecoverable error that stops the runbook
     commands:
       - rd run --prompted named-step-recovery-loop.runbook.md
-      - rd pass
-      - rd fail
-      - rd fail
+      - rd pass --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 2
+      - rd fail --token ${TOKEN} --step ErrorHandler
     result: STOP
 ---
 

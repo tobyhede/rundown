@@ -1,6 +1,11 @@
 /**
  * Integration tests for built-in runbook workflows.
  * Pattern: follows packages/cli/__tests__/check.test.ts structure
+ *
+ * Mutations follow the one-writer protocol (#901): every `pass` / `fail` /
+ * `goto` names its authority with `--token <owner_token>` (captured from the
+ * `runbook_started` event by `runCli`) and `pass` / `fail` name the current
+ * position with `--step`. `status` is bare (every run) or `--run <id>`.
  */
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
@@ -8,7 +13,7 @@ import { mkdtempSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { runCli, withActiveRunClaim } from '../helpers/test-utils.js';
+import { runCli, withOwnerToken, type CliResult } from '../helpers/test-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -46,28 +51,69 @@ function findEnteredStep(events: JsonEvent[], stepId: string): JsonEvent | undef
   );
 }
 
-function eventRunbookPath(event: JsonEvent): string {
-  const runbook = event.runbook as { readonly path?: unknown } | undefined;
-  return typeof runbook?.path === 'string' ? runbook.path : '';
-}
-
-function inlineLaunchPath(event: JsonEvent): string {
-  const inlineLaunch = event.inlineLaunch as
-    | {
-        readonly childRunbookPath?: unknown;
-        readonly childRunbookRef?: { readonly path?: unknown };
-      }
-    | undefined;
-  if (typeof inlineLaunch?.childRunbookPath === 'string') {
-    return inlineLaunch.childRunbookPath;
+/**
+ * The position the run is currently at, read from the latest `step_entered`
+ * event: the substep when one is active, else the top-level step. This is
+ * what `--step` must name on the next `pass` / `fail`.
+ *
+ * @param events - Every event observed so far, in order
+ * @returns The current position
+ * @throws {Error} When no `step_entered` has been observed
+ */
+function currentPosition(events: JsonEvent[]): string {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.type !== 'step_entered') continue;
+    const position = event.position as { current?: unknown; substep?: unknown } | undefined;
+    if (typeof position?.substep === 'string') return position.substep;
+    if (typeof position?.current === 'string') return position.current;
   }
-  return typeof inlineLaunch?.childRunbookRef?.path === 'string'
-    ? inlineLaunch.childRunbookRef.path
-    : '';
+  throw new Error('No step_entered event observed; cannot name --step');
 }
 
-function eventPromptText(event: JsonEvent): string {
-  return typeof event.prompt === 'string' ? event.prompt : '';
+/**
+ * The run id announced by `runbook_started`.
+ *
+ * @param events - Events from the `rundown run` invocation
+ * @returns The run id (`rd_` + 32 hex)
+ * @throws {Error} When no `runbook_started` event is present
+ */
+function startedRunId(events: JsonEvent[]): string {
+  const started = events.find((event) => event.type === 'runbook_started');
+  if (typeof started?.runbookId !== 'string') {
+    throw new Error('Expected a runbook_started event carrying runbookId');
+  }
+  return started.runbookId;
+}
+
+/**
+ * Read the detail status of one run.
+ *
+ * @param runId - The run to read
+ * @param cwd - Workspace holding the run
+ * @returns Parsed status JSON
+ */
+function statusOf(
+  runId: string,
+  cwd: string,
+): Record<string, unknown> & { position: { current: string } } {
+  const result = runCli(['status', '--run', runId], cwd);
+  expect(result.exitCode).toBe(0);
+  return JSON.parse(result.stdout) as Record<string, unknown> & { position: { current: string } };
+}
+
+/**
+ * Pass or fail the current position of the single run started in `cwd`.
+ *
+ * @param command - `pass` or `fail`
+ * @param events - Events observed so far (appended to in place)
+ * @param cwd - Workspace of the run
+ * @returns The CLI result
+ */
+function transition(command: 'pass' | 'fail', events: JsonEvent[], cwd: string): CliResult {
+  const result = runCli(withOwnerToken([command, '--step', currentPosition(events)], cwd), cwd);
+  events.push(...parseJsonEvents(result.stdout));
+  return result;
 }
 
 describe('Built-in Runbook Workflow Integration', () => {
@@ -95,6 +141,18 @@ describe('Built-in Runbook Workflow Integration', () => {
           ].join('\n'),
         ),
       ).toEqual([{ type: 'step_entered', position: { current: '1' } }, { type: 'step_completed' }]);
+    });
+  });
+
+  describe('currentPosition', () => {
+    it('names the active substep when one is present, else the step', () => {
+      expect(currentPosition([{ type: 'step_entered', position: { current: '2' } }])).toBe('2');
+      expect(
+        currentPosition([
+          { type: 'step_entered', position: { current: '1' } },
+          { type: 'step_entered', position: { current: '2', substep: '2.1' } },
+        ]),
+      ).toBe('2.1');
     });
   });
 
@@ -146,20 +204,19 @@ describe('Built-in Runbook Workflow Integration', () => {
   });
 
   describe('prompted mode step navigation', () => {
-    async function runPromptedUntilStep(
+    function runPromptedUntilStep(
       runbookPath: string,
       stepId: string,
       args: string[] = [],
-    ): Promise<JsonEvent> {
+    ): JsonEvent {
       let result = runCli(['run', runbookPath, '--prompted', ...args], tempDir);
       expect(result.exitCode).toBe(0);
       const events = parseJsonEvents(result.stdout);
 
       let entered = findEnteredStep(events, stepId);
       for (let index = 0; index < 30 && !entered; index += 1) {
-        result = runCli(await withActiveRunClaim(['pass'], tempDir), tempDir);
+        result = transition('pass', events, tempDir);
         expect(result.exitCode).toBe(0);
-        events.push(...parseJsonEvents(result.stdout));
         entered = findEnteredStep(events, stepId);
       }
 
@@ -193,11 +250,11 @@ describe('Built-in Runbook Workflow Integration', () => {
       },
     ])(
       'resolves ARTIFACTS for bundled runbook $file',
-      async ({ file, step, artifactName, key, args }) => {
+      ({ file, step, artifactName, key, args }) => {
         const previousPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
         process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
         try {
-          const entered = await runPromptedUntilStep(join(runbooksDir, ...file), step, args);
+          const entered = runPromptedUntilStep(join(runbooksDir, ...file), step, args);
           const artifacts = entered.artifacts as
             | Record<string, { key?: unknown; uri?: unknown; path?: unknown }>
             | undefined;
@@ -230,91 +287,6 @@ describe('Built-in Runbook Workflow Integration', () => {
       },
     );
 
-    it('passes PlanPath from automatic write-plan launch into review-plan launch', async () => {
-      const previousPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
-      process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
-      try {
-        const wrapperPath = join(tempDir, 'inline-plan-review.runbook.md');
-        await writeFile(
-          wrapperPath,
-          `# Inline Plan Review
-
-## 1. Write plan
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Write child
-- planning/write-plan.runbook.md
-
-## 2. Review plan
-- PASS ALL COMPLETE
-- FAIL ANY STOP
-
-### 2.1 Review child
-- planning/review-plan.runbook.md
-`,
-        );
-
-        const events: JsonEvent[] = [];
-        let combinedOutput = '';
-        let result = runCli(
-          ['run', wrapperPath, '--prompted', '--input', 'FeatureName=inline-planpath-regression'],
-          tempDir,
-        );
-        expect(result.exitCode).toBe(0);
-        combinedOutput += result.stdout + result.stderr;
-        events.push(...parseJsonEvents(result.stdout));
-
-        let reviewEntered = events.find(
-          (event) =>
-            event.type === 'step_entered' &&
-            eventRunbookPath(event).includes('planning/review-plan.runbook.md') &&
-            eventPromptText(event).includes('plan.json'),
-        );
-
-        for (let index = 0; index < 20 && !reviewEntered; index += 1) {
-          result = runCli(await withActiveRunClaim(['pass'], tempDir), tempDir);
-          expect(result.exitCode).toBe(0);
-          combinedOutput += result.stdout + result.stderr;
-          events.push(...parseJsonEvents(result.stdout));
-          reviewEntered = events.find(
-            (event) =>
-              event.type === 'step_entered' &&
-              eventRunbookPath(event).includes('planning/review-plan.runbook.md') &&
-              eventPromptText(event).includes('plan.json'),
-          );
-        }
-
-        if (!reviewEntered) {
-          throw new Error('Expected automatic inline launch to enter review-plan with PlanPath');
-        }
-
-        const inlineLaunches = events.filter((event) => event.inlineLaunch !== undefined);
-        expect(inlineLaunches.some((event) => inlineLaunchPath(event).includes('write-plan'))).toBe(
-          true,
-        );
-        expect(
-          inlineLaunches.some((event) => inlineLaunchPath(event).includes('review-plan')),
-        ).toBe(true);
-        expect(combinedOutput).toContain('inlineLaunch');
-        expect(combinedOutput).toContain('PlanPath');
-        expect(combinedOutput).not.toContain('rd run ');
-        expect(combinedOutput).not.toContain('PlanPath is required');
-        // Bare artifact alias now renders the local work-dir path, not the rd:// URI.
-        expect(eventPromptText(reviewEntered)).toEqual(
-          expect.stringMatching(/\.rundown\/work\/.*\/rd_[a-f0-9]{32}\/plan\.json/),
-        );
-        expect(eventPromptText(reviewEntered)).not.toContain('rd://artifacts/');
-        expect(eventPromptText(reviewEntered)).not.toContain('{{ PlanPath }}');
-      } finally {
-        if (previousPluginRoot === undefined) {
-          delete process.env.CLAUDE_PLUGIN_ROOT;
-        } else {
-          process.env.CLAUDE_PLUGIN_ROOT = previousPluginRoot;
-        }
-      }
-    });
-
     it('runs through pass/fail workflow', async () => {
       // Create test runbook inline (pattern from CLI check.test.ts)
       const testRunbook = `---
@@ -335,28 +307,39 @@ Do the second thing.
       const runbookPath = join(tempDir, 'test.runbook.md');
       await writeFile(runbookPath, testRunbook);
 
-      // Start runbook in prompted mode
+      // Start runbook in prompted mode; the owner token is printed once, here.
       let result = runCli(['run', runbookPath, '--prompted'], tempDir);
       expect(result.exitCode).toBe(0);
+      const events = parseJsonEvents(result.stdout);
+      const runId = startedRunId(events);
+      expect(events.find((event) => event.type === 'runbook_started')?.owner_token).toMatch(
+        /^rdo_/,
+      );
 
       // Check we're on step 1
-      result = runCli('status', tempDir);
-      expect(result.exitCode).toBe(0);
-      const status1 = JSON.parse(result.stdout);
-      expect(status1.position.current).toBe('1');
+      expect(statusOf(runId, tempDir).position.current).toBe('1');
+
+      // A bare pass is refused: the token is the authority, nothing is written.
+      result = runCli(['pass', '--step', '1'], tempDir);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stdout + result.stderr).toContain('TOKEN_REQUIRED');
+      expect(statusOf(runId, tempDir).position.current).toBe('1');
 
       // Pass first step
-      result = runCli('pass', tempDir);
+      result = transition('pass', events, tempDir);
       expect(result.exitCode).toBe(0);
 
       // Check we're on step 2
-      result = runCli('status', tempDir);
-      expect(result.exitCode).toBe(0);
-      const status2 = JSON.parse(result.stdout);
-      expect(status2.position.current).toBe('2');
+      expect(statusOf(runId, tempDir).position.current).toBe('2');
+
+      // --step must name the current position; a stale one is refused.
+      result = runCli(withOwnerToken(['pass', '--step', '1'], tempDir), tempDir);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stdout + result.stderr).toContain('INVALID_STEP');
+      expect(statusOf(runId, tempDir).position.current).toBe('2');
 
       // Complete the runbook
-      result = runCli('pass', tempDir);
+      result = transition('pass', events, tempDir);
       expect(result.exitCode).toBe(0);
     });
 
@@ -388,19 +371,18 @@ Recovery step.
       // Start runbook in prompted mode
       let result = runCli(['run', runbookPath, '--prompted'], tempDir);
       expect(result.exitCode).toBe(0);
+      const events = parseJsonEvents(result.stdout);
+      const runId = startedRunId(events);
 
       // Fail first step - should jump to step 3
-      result = runCli('fail', tempDir);
+      result = transition('fail', events, tempDir);
       expect(result.exitCode).toBe(0);
 
       // Check we're on step 3 (recovery)
-      result = runCli('status', tempDir);
-      expect(result.exitCode).toBe(0);
-      const status = JSON.parse(result.stdout);
-      expect(status.position.current).toBe('3');
+      expect(statusOf(runId, tempDir).position.current).toBe('3');
 
       // Complete the runbook
-      result = runCli('pass', tempDir);
+      result = transition('pass', events, tempDir);
       expect(result.exitCode).toBe(0);
     });
   });
@@ -433,16 +415,14 @@ Third step.
       // Start runbook in prompted mode
       let result = runCli(['run', runbookPath, '--prompted'], tempDir);
       expect(result.exitCode).toBe(0);
+      const runId = startedRunId(parseJsonEvents(result.stdout));
 
-      // Jump directly to step 3
-      result = runCli('goto 3', tempDir);
+      // Jump directly to step 3 (goto keeps its positional target; authority is --token)
+      result = runCli(withOwnerToken(['goto', '3'], tempDir), tempDir);
       expect(result.exitCode).toBe(0);
 
       // Check we're on step 3
-      result = runCli('status', tempDir);
-      expect(result.exitCode).toBe(0);
-      const status = JSON.parse(result.stdout);
-      expect(status.position.current).toBe('3');
+      expect(statusOf(runId, tempDir).position.current).toBe('3');
     });
   });
 });

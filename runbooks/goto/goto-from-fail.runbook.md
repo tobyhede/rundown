@@ -9,14 +9,14 @@ scenarios:
     description: Fail step 1 (GOTO 2), pass recovery step 2
     commands:
       - rd run --prompted goto-from-fail.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   completed:
     description: Pass step 1 directly
     commands:
       - rd run --prompted goto-from-fail.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
 ---
 

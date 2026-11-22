@@ -8,11 +8,11 @@ scenarios:
   reopen-and-complete:
     commands:
       - rd run --prompted goto-reopen-nondelegated.runbook.md
-      - rd pass
-      - rd fail
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd fail --token ${TOKEN} --step 1.2
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

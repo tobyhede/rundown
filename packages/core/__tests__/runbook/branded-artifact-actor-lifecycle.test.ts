@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
+import { generateOwnerToken, hashRunSecret } from '../../src/runbook/run-secrets.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
 import {
   isTrustedArtifactArray,
@@ -59,7 +60,11 @@ describe('TrustedArtifactRecord brand survives full RunbookActorService lifecycl
     const created = await manager.create(
       { source: 'project', path: 'lifecycle-test.md' },
       { title: 'Lifecycle', description: 'lifecycle', steps },
-      { runbookPath: 'lifecycle-test.md', frontmatterOutputs: [] },
+      {
+        runbookPath: 'lifecycle-test.md',
+        ownerTokenHash: hashRunSecret(generateOwnerToken()),
+        frontmatterOutputs: [],
+      },
     );
 
     const branded = brandTrustedArtifactRecordForTest(RECORD);
@@ -95,7 +100,11 @@ describe('TrustedArtifactRecord brand survives full RunbookActorService lifecycl
     const created = await manager.create(
       { source: 'project', path: 'lifecycle-test.md' },
       { title: 'Lifecycle', description: 'lifecycle', steps },
-      { runbookPath: 'lifecycle-test.md', frontmatterOutputs: [] },
+      {
+        runbookPath: 'lifecycle-test.md',
+        ownerTokenHash: hashRunSecret(generateOwnerToken()),
+        frontmatterOutputs: [],
+      },
     );
 
     const brandedArr = brandTrustedArtifactArrayForTest([RECORD]);

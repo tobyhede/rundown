@@ -8,7 +8,7 @@ scenarios:
     description: Unresolved variable demotes FOR to prompted-for, agent passes manually
     commands:
       - rd run for-prompted-fallback.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
     result: COMPLETE
   resolved:
     description: Variable bounds expand at parse time, FOR iterates normally

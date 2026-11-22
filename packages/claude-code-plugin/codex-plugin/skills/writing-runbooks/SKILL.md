@@ -365,6 +365,15 @@ substeps, before transitions, prompt text, or body content.
 An H2 `DELEGATE` propagates to its substeps. Delegated targets must resolve to
 runbooks; do not use delegation for arbitrary files or commands.
 
+### Composition in this build
+
+Composition is valid syntax, but this build runs standalone runbooks only. A
+runbook with a runbook-list substep (child runbook paths listed in a step body),
+with or without `- DELEGATE`, parses, yet `rundown run` refuses it with
+`RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run. Inline composition returns
+in #903 and delegation in #904. Until then, make each leaf runnable on its own,
+and tell the user that a composing parent cannot run yet.
+
 ## FOR Loops
 
 Repeat a step across iterations:
@@ -440,9 +449,9 @@ runbook and hand off to `running-runbooks`.
 The orchestrating agent loads the execution protocol _first_, then starts the
 runbook — the skill instructs, the agent runs `rundown run`. Loading the
 protocol before the run is deliberate: the agent must be ready to interpret the
-first step's output (including a delegation) the moment it appears, not scramble
-for the protocol after `rundown run` has already fired. Nothing auto-starts a
-runbook behind the agent's back.
+first step's output the moment it appears, not scramble for the protocol after
+`rundown run` has already fired. Nothing auto-starts a runbook behind the
+agent's back.
 
 Create one for common, named runbooks (e.g. `planning`). One-off project
 runbooks don't need their own skill — the generic `rundown` launcher starts any
@@ -465,8 +474,6 @@ description: Use when <the user need this runbook serves, in trigger terms>.
 Load the execution protocol *before* starting the runbook:
 
 Load and follow the bundled `running-runbooks` skill before starting the runbook.
-
-Stage 1 does not provide Codex hook parity for delegated child dispatch. If this workflow reaches a delegated step that requires automatic child-agent orchestration, stop and report that Stage 2 delegation hook support is required.
 
 Then start it: `rundown run <runbook-name>`
 </important>
@@ -494,11 +501,11 @@ skill names the intent and points at the craft skills.
 
 Decide which skills the bootstrap skill references by what the runbook contains:
 
-| If the runbook…                                     | Reference                                                                                   |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| (always)                                            | [running-runbooks](../running-runbooks/SKILL.md) — the execution protocol                   |
-| contains a `- DELEGATE` directive                   | Stage 2 Codex delegation hook support                                                       |
-| writes, reviews, or executes a plan (plan pipeline) | [writing-plans](../writing-plans/SKILL.md) / [executing-plans](../executing-plans/SKILL.md) |
+| If the runbook…                                                  | Reference                                                                                                                                                                                               |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| (always)                                                         | [running-runbooks](../running-runbooks/SKILL.md) — the execution protocol                                                                                                                               |
+| composes other runbooks (a runbook-list substep or `- DELEGATE`) | No skill: state in the `<important>` block that `rundown run` refuses it until #903 / #904 (see [Composition in this build](#composition-in-this-build) and the [planning](../planning/SKILL.md) skill) |
+| writes, reviews, or executes a plan (plan pipeline)              | [writing-plans](../writing-plans/SKILL.md) / [executing-plans](../executing-plans/SKILL.md)                                                                                                             |
 
 Extend this table as new craft skills are added. The rule: reference the skill
 that owns the _craft_ for each thing the runbook does; never duplicate it.

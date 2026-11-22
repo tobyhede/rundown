@@ -9,9 +9,9 @@ scenarios:
     description: All steps pass through to completion
     commands:
       - rd run --prompted mixed-modifiers.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
+      - rd pass --token ${TOKEN} --step 4
     result: COMPLETE
   auto-execution:
     description: Step 2 passes, GOTOs step 4, completes

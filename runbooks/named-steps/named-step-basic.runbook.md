@@ -9,14 +9,14 @@ scenarios:
     description: Main runbook passes, completes successfully
     commands:
       - rd run --prompted named-step-basic.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
   recovered:
     description: Main runbook fails, ErrorHandler recovers
     commands:
       - rd run --prompted named-step-basic.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step ErrorHandler
     result: STOP
 ---
 

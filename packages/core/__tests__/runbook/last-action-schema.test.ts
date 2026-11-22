@@ -21,7 +21,6 @@ describe('LastActionSchema', () => {
     { type: 'STOP', origin: 'aggregation' },
     { type: 'GOTO', origin: 'aggregation', target: '3' },
     { type: 'RETRY', origin: 'aggregation' },
-    { type: 'RETRY_ERROR', origin: 'direct', code: 'RD-902', message: 'retry hook failed' },
     { type: 'OUTPUT_CAPTURE_FAILED', origin: 'direct', message: 'disk full' },
     { type: 'ARTIFACT_RESOLUTION_FAILED', origin: 'direct', message: 'unbound artifact' },
     {
@@ -29,12 +28,6 @@ describe('LastActionSchema', () => {
       origin: 'direct',
       code: 'undefined-variable',
       message: 'bad source',
-    },
-    {
-      type: 'DELEGATION_ISSUANCE_FAILED',
-      origin: 'direct',
-      reason: 'delegation_resolution_failed',
-      message: 'missing child',
     },
     { type: 'POLICY_DENIED', origin: 'direct', message: 'command not in allowlist' },
     { type: 'COMMAND_EXECUTION_FAILED', origin: 'direct', message: 'spawn ENOENT' },
@@ -49,7 +42,7 @@ describe('LastActionSchema', () => {
   it.each([
     {
       label: 'missing required message',
-      input: { type: 'RETRY_ERROR', origin: 'direct', code: 'RD-902' },
+      input: { type: 'OUTPUT_CAPTURE_FAILED', origin: 'direct' },
     },
     { label: 'unknown origin literal', input: { type: 'COMPLETE', origin: 'derived' } },
     { label: 'unknown discriminant type', input: { type: 'WAT', origin: 'direct' } },

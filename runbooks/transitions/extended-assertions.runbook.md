@@ -21,16 +21,16 @@ scenarios:
     description: Prompted execution completes via rd pass
     commands:
       - rd run --prompted extended-assertions.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   via-retry:
     description: Prompted fail triggers retry then completes
     commands:
       - rd run --prompted extended-assertions.runbook.md
-      - rd fail
-      - rd pass
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

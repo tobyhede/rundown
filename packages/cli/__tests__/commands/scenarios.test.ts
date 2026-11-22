@@ -43,13 +43,13 @@ scenarios:
     description: Happy path
     commands:
       - rd run --prompted test-runbook.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token \${TOKEN} --step 1
+      - rd pass --token \${TOKEN} --step 2
     result: COMPLETE
   failure:
     commands:
       - rd run --prompted test-runbook.runbook.md
-      - rd fail
+      - rd fail --token \${TOKEN} --step 1
     result: STOP
 ---
 

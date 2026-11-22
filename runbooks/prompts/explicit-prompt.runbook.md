@@ -9,8 +9,8 @@ scenarios:
     description: All steps pass successfully
     commands:
       - rd run --prompted explicit-prompt.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

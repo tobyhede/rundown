@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
+import {
+  createTestWorkspace,
+  requireRunId,
+  runCliInProcess,
+  type TestWorkspace,
+} from '../helpers/test-utils.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -106,18 +111,18 @@ echo hello
   });
 
   describe('status', () => {
-    it('outputs inactive status when empty', async () => {
+    it('outputs an empty run list when no runs exist', async () => {
       const result = await runCliInProcess('status', workspace);
       const output = JSON.parse(result.stdout);
 
       expect(output).toEqual({
         kind: 'status',
         active: false,
-        stashed: false,
+        runs: [],
       });
     });
 
-    it('outputs active status details', async () => {
+    it('lists every run bare, without a token', async () => {
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
       fs.writeFileSync(
         runbookPath,
@@ -128,13 +133,48 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
+      const start = await runCliInProcess('run --prompted test.runbook.md', workspace);
+      const runId = requireRunId(start.stdout);
 
       const result = await runCliInProcess('status', workspace);
       const output = JSON.parse(result.stdout);
 
+      expect(output).toEqual({
+        kind: 'status',
+        active: false,
+        runs: [
+          expect.objectContaining({
+            id: runId,
+            runbook: 'test.runbook.md',
+            status: 'running',
+            step: '1',
+            total: 1,
+          }),
+        ],
+      });
+      expect(result.stdout).not.toContain('rdo_');
+    });
+
+    it('outputs one run in detail with --run', async () => {
+      const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
+      fs.writeFileSync(
+        runbookPath,
+        `---
+name: test-runbook
+---
+## 1 Step
+prompt: Wait
+`,
+      );
+      const start = await runCliInProcess('run --prompted test.runbook.md', workspace);
+      const runId = requireRunId(start.stdout);
+
+      const result = await runCliInProcess(['status', '--run', runId], workspace);
+      const output = JSON.parse(result.stdout);
+
       expect(output.active).toBe(true);
-      expect(output.stashed).toBe(false);
+      expect(output).toHaveProperty('runId', runId);
+      expect(result.stdout).not.toContain('rdo_');
       // Flat structure per docs/spec/cli-output.md
       expect(output).toHaveProperty('file', 'test.runbook.md');
       expect(output.position).toHaveProperty('current', '1');

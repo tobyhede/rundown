@@ -9,15 +9,15 @@ scenarios:
     description: All substeps pass, PASS ALL fires
     commands:
       - rd run --prompted all-modifier.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
     result: COMPLETE
   one-fails-stopped:
     description: One substep fails, FAIL ANY fires STOP
     commands:
       - rd run --prompted all-modifier.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
     result: STOP
   auto-execution:
     description: All substeps auto-execute and pass
