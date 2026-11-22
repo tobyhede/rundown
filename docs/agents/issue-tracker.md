@@ -1,13 +1,12 @@
 # Issue tracker: GitHub
 
-Issues, roadmaps and follow-up work for this repo live as GitHub issues. Use the
-`gh` CLI for all operations against them.
+Issues, specs, roadmaps and follow-up work for this repo live as GitHub issues.
+Use the `gh` CLI for all operations against them.
 
-**This does not relocate prospective documentation.** Per `CLAUDE.md`, dated
-specs, implementation plans and design notes stay in `docs/superpowers/`, and
-the current design stays in `docs/internal/`. A skill that publishes a _spec_
-writes it there; only trackable issues and follow-up work become GitHub issues.
-`docs/README.md` remains the documentation index.
+Decisions are recorded as ADRs: `docs/adr/` for system-wide decisions,
+`packages/<package>/docs/adr/` for package-scoped ones. See
+`docs/agents/domain.md`. The current design stays in `docs/internal/`.
+`docs/superpowers/` is a closed historical record: do not add to it.
 
 ## Conventions
 
