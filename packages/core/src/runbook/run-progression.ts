@@ -102,7 +102,8 @@ export const CONCURRENT_MODIFICATION_CODE = 'CONCURRENT_MODIFICATION';
  * - `retryable` — the condition is transient; repeating the same gesture can
  *   succeed (a refused save, a broken reporting channel, a failed render).
  * - `permanent` — no retry of the same gesture can succeed; recovery is a
- *   different explicit action (finish, stop, prune, or restart the run).
+ *   different explicit action by the owner (goto, finish, stop, prune, or
+ *   restart the run).
  */
 export type RunProgressionRecovery = 'retryable' | 'permanent';
 
@@ -140,6 +141,11 @@ export type RunProgressionWaitReason = 'awaiting_input' | 'collected';
  *   the owner decides explicitly. Code `EXECUTION_INTERRUPTED`.
  * - `entry_render_failed` — rendering the selected unit's entry threw; nothing
  *   was committed and re-activation re-renders.
+ * - `artifact_input_required` — rendering the selected unit's entry refused a
+ *   `{{ path Name }}` over a value that is not an artifact (spec §9.3). Nothing
+ *   was committed and the run keeps its position, but no re-activation clears
+ *   it while the binding stands: `permanent`, code `ARTIFACT_INPUT_REQUIRED`,
+ *   and the message names the owner's recovery.
  * - `inline_child_launch_failed` — the Inline Child an inline substep reserved
  *   could not be launched: its runbook did not prepare, composes in a form
  *   this build does not run, nests deeper than {@link MAX_INLINE_CHILD_DEPTH}, or another
@@ -159,6 +165,7 @@ export type RunProgressionRefusalReason =
   | 'execution_interrupted'
   | 'command_outcome_unknown'
   | 'entry_render_failed'
+  | 'artifact_input_required'
   | 'inline_child_launch_failed'
   | 'claim_tickets_not_issued';
 
@@ -1109,6 +1116,27 @@ async function driveRun(
         continue;
       }
       return { kind: 'waiting', runId, reason: intent.reason };
+    }
+
+    if (intent.kind === 'refused' && intent.reason === 'artifact_input_required') {
+      // `{{ path Name }}` over a value that is not an artifact: the typed
+      // refusal the launch check gives a launch value (spec §9.3).
+      // Re-rendering cannot succeed while the binding stands, so it is
+      // `permanent` — the owner must act. Nothing was committed and the run
+      // keeps its cursor; the message (a step-entry refusal) names the action.
+      const { refusal } = intent;
+      sink.emit({
+        type: 'ERROR_OCCURRED',
+        payload: { message: refusal.message, code: refusal.code },
+      });
+      return {
+        kind: 'refused',
+        runId,
+        reason: intent.reason,
+        code: refusal.code,
+        message: refusal.message,
+        recovery: 'permanent',
+      };
     }
 
     if (intent.kind === 'refused') {

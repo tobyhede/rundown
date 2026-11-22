@@ -13,8 +13,13 @@ Load and follow the bundled `running-runbooks` skill before starting the
 runbook.
 
 Then start it:
-`rundown run rundown:convert-skill --input SkillPath=<path-to-SKILL.md>`
-</important>
+`rundown run rundown:convert-skill --artifacts SkillPath=<rd:// URI of the SKILL.md artifact>`
+
+`SkillPath` is an **artifact input**: the runbook asserts it with a naked
+`ARTIFACTS` declaration, so it takes an `rd://artifacts/…` URI naming an
+existing artifact (its `uri` in `rundown artifact ls --run <run_id>` of the run
+that produced it). A plain path through `--input SkillPath=…` is refused
+`ARTIFACT_INPUT_REQUIRED`. </important>
 
 Distill a Claude skill into a rundown runbook that **orchestrates** its
 workflow. The runbook captures the high-level sequence of steps and coordinates
@@ -113,7 +118,8 @@ requirements → research → map files → write → validate → verify.
 [`runbooks/meta/convert-skill.runbook.md`](../../runbooks/meta/convert-skill.runbook.md)
 orchestrates this conversion itself: invoke this skill → read the source skill →
 map the backbone → write the runbook → `rundown check` → verify against the
-checklist. Run it with `--input SkillPath=<path-to-SKILL.md>`.
+checklist. Run it with
+`--artifacts SkillPath=<rd:// URI of the SKILL.md artifact>`.
 
 ## Common Mistakes
 

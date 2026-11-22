@@ -49,6 +49,7 @@ describe('artifact file reference properties', () => {
 
         await expect(
           resolveArtifactDeclarations([decl('Reference', token)], {
+            stepBoundNames: new Set<string>(),
             cwd,
             workPath: WORK_PATH,
             contextId: CONTEXT_ID,
@@ -91,6 +92,7 @@ describe('artifact file reference properties', () => {
 
         await expect(
           resolveArtifactDeclarations([decl('Esc', `${dir}/${linkName}`)], {
+            stepBoundNames: new Set<string>(),
             cwd,
             workPath: WORK_PATH,
             contextId: CONTEXT_ID,
@@ -114,6 +116,7 @@ describe('artifact file reference properties', () => {
         const canonical = await fsp.realpath(target);
 
         const result = await resolveArtifactDeclarations([decl('Reference', token)], {
+          stepBoundNames: new Set<string>(),
           cwd,
           workPath: WORK_PATH,
           contextId: CONTEXT_ID,

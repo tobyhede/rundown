@@ -517,7 +517,19 @@ direct alias rendering. Managed `rd://artifacts/...` records render under
 path. For an `ArtifactRecord[]`, it renders a JSON array of contained local
 filesystem paths. The **literal-key form** `{{ path "key" }}` renders a single
 local filesystem path for the quoted key under the current `WorkPath`,
-`ContextId`, and `RunId` — it does not require an artifact binding.
+`ContextId`, and `RunId` — it does not require an artifact binding. The
+variable-reference form over a value that is not an artifact is refused with
+`ARTIFACT_INPUT_REQUIRED` (§10.1.2), at launch for a launch value no step can
+rebind first and otherwise at the entry render of the unit that holds it. Launch
+defers the same names the naked assertion check defers (§10.1.2): the render is
+left for step entry. Only those two renders judge the reference: a whole-runbook
+render of a persisted run, which reaches steps no one is entering, MUST NOT
+refuse it and leaves it unrendered for that unit's entry. Inside a `FOR` step's
+substeps the loop variable is the iteration's value: a whole-runbook render
+(launch or reload) MUST leave a reference to it (`{{ path plan }}`,
+`{{ plan.file }}`) for the substep's entry render, never substituting or judging
+an outer binding of the same name. The refusal names the variable that binds the
+value — `plan` for `{{ path plan.file }}`.
 
 `{{ artifact ArtifactName }}` renders artifact URI values with the same scalar
 or array cardinality as direct alias rendering: a single URI for
@@ -693,6 +705,39 @@ Resolution MUST be all-or-nothing. The directive MUST error at evaluation when:
 | `not-an-artifact`  | The bound value is not one of the supported shapes above.                                              |
 | `unresolvable-uri` | A URI string does not parse, or parses but matches no manifest row.                                    |
 | `partial-resolve`  | A `URI[]` or JSON string `URI[]` contains at least one URI that fails resolution. No partial emission. |
+
+A bound value that no shape above admits — `not-an-artifact`, or a URI form
+whose string does not parse as an `rd://` URI — is a non-artifact value,
+reported with the public code `ARTIFACT_INPUT_REQUIRED`. An artifact-shaped
+record that did not come from the trusted resolver path is `not-an-artifact`. A
+`URI[]` or JSON string `URI[]` holding an `rd://` entry beside an entry that is
+not a parseable URI is `partial-resolve`. Its timing follows §8.2: when the
+value comes from launch inputs and no step can rebind the name, launch
+(`rundown run`, `rundown resolve`, child preparation) MUST refuse it before the
+run is created, since the value in scope at the assertion is the launch value. A
+name in the produced set MUST be deferred to step entry. So MUST every name in a
+runbook that composes a child (an inline runbook-list entry or a `DELEGATE`):
+the child's frontmatter `outputs:` are forwarded into the parent (§10.3), and
+launch does not load child runbooks to learn them. Like the produced set, this
+deferral is order-free. A well-formed URI is never refused at launch — only step
+entry can tell whether it names a row. The way to supply an artifact at launch
+is the artifact channel (`--artifacts`, §9.1).
+
+The refusal names the variable and the kind of value it holds, never the value,
+which may be a secret. Its guidance follows where it happens: a root launch
+names `--artifacts`; child preparation says the value came from the parent and
+must be an artifact there; at step entry it follows what the refusal does to the
+run. A refusal while the unit's `ARTIFACTS` resolve — a naked assertion, or a
+`{{ path … }}` inside a declaration's quoted token — stops the run; a
+`{{ path … }}` render of the unit's description, prompt or command keeps the
+run's position. At step entry the recovery also depends on whether a step of the
+runbook binds the name for the judging unit (an `OUTPUTS` name, a name-binding
+`ARTIFACTS` alias, or — only for a substep of its `FOR` step — a loop variable;
+a `FOR` step's own `ARTIFACTS` resolve before any iteration binds it): when one
+does, that step must bind an artifact (when the run keeps its position, the
+owner may `rundown goto` a step that rebinds it, or `rundown stop`); when none
+does, the value is the one the run was given, and the guidance names a new run
+supplied through `--artifacts`.
 
 The naked form is intended for consumer runbooks (e.g. a reviewer asserting that
 `Plan` was inherited from the parent's delegation chain) where the variable is

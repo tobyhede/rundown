@@ -20,7 +20,11 @@ describe('converting-skills-to-runbooks skill', () => {
 
   it('declares the runbook entrypoint and running-runbooks invocation', () => {
     const skill = readSkill();
-    expect(skill).toMatch(/`rundown run rundown:convert-skill --input SkillPath=/);
+    // SkillPath is asserted as an artifact (naked ARTIFACTS at step 2), so it
+    // is supplied through the artifact channel; `--input` is refused
+    // ARTIFACT_INPUT_REQUIRED.
+    expect(skill).toMatch(/`rundown run rundown:convert-skill --artifacts SkillPath=<rd:\/\//);
+    expect(skill).not.toMatch(/rundown:convert-skill --input/);
     expect(skill).toMatch(/Skill\(skill:\s*"rundown:running-runbooks"\)/);
   });
 

@@ -54,6 +54,7 @@ import { InvalidRunbookStateError } from './persisted-state-guards.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { isArtifactRecord } from './artifact-schema.js';
 import { isForResolutionFailureCode } from './actors/for-iterate-actor.js';
+import { ARTIFACT_INPUT_REQUIRED } from './artifact-input-required.js';
 import {
   commandCompletedEffect,
   commandStartedEffect,
@@ -246,10 +247,15 @@ function isPersistableLastAction(value: unknown): value is LastAction {
     const v = value as { readonly code?: unknown; readonly message?: unknown };
     return isForResolutionFailureCode(v.code) && typeof v.message === 'string';
   }
+  if (type === 'ARTIFACT_RESOLUTION_FAILED') {
+    const v = value as { readonly code?: unknown; readonly message?: unknown };
+    return (
+      typeof v.message === 'string' && (v.code === undefined || v.code === ARTIFACT_INPUT_REQUIRED)
+    );
+  }
   if (
     type === 'RETRY_ERROR' ||
     type === 'OUTPUT_CAPTURE_FAILED' ||
-    type === 'ARTIFACT_RESOLUTION_FAILED' ||
     type === 'POLICY_DENIED' ||
     type === 'COMMAND_EXECUTION_FAILED'
   ) {

@@ -19,6 +19,7 @@ describe('preparation boundary hygiene', () => {
       runbookRef: { source: 'project', path: 'workflow.md' },
       helperRegistry: new Map([['upper', (value: string) => value.toUpperCase()]]),
       identity: { kind: 'prepared' },
+      origin: { kind: 'launch' },
     });
 
     expect(result.ok).toBe(true);
