@@ -37,6 +37,7 @@ async function waitForDone(actor: ReturnType<typeof createActor>): Promise<void>
 describe('compiled machine command execution', () => {
   it('executes a command through the command actor and raises PASS through output capture', async () => {
     const machine = compileRunbookToMachine([commandStep], {
+      commandWorkingDir: process.cwd(),
       commandServices: services({ success: true, exitCode: 0 }),
       evaluationOptions: { cwd: process.cwd() },
       templateVars: {
@@ -67,8 +68,41 @@ describe('compiled machine command execution', () => {
     expect(snapshot.context.lastAction?.type).toBe('COMPLETE');
   });
 
+  it('runs the command in the launch directory while OUTPUTS stay under the project root', async () => {
+    const seen: { cwd: string; workingDir: string }[] = [];
+    const machine = compileRunbookToMachine([commandStep], {
+      commandWorkingDir: '/project/packages/svc',
+      commandServices: {
+        runExternalCommand: async ({ cwd, workingDir }) => {
+          seen.push({ cwd, workingDir });
+          return { success: true, exitCode: 0 };
+        },
+      },
+      evaluationOptions: { cwd: process.cwd() },
+      templateVars: {
+        RunId: 'rd_11111111111111111111111111111111',
+        WorkPath: '.rundown/work',
+        ContextId: 'ctx',
+        RunbookRef: { source: 'project', path: 'workflow.runbook.md' },
+      } as never,
+    });
+    const actor = createActor(machine).start();
+
+    actor.send({
+      type: 'EXECUTE_COMMAND',
+      command: 'npm test',
+      displayCommand: 'npm test',
+      runbookPath: 'workflow.runbook.md',
+      rdInjected: {},
+    });
+    await waitForDone(actor);
+
+    expect(seen).toEqual([{ cwd: process.cwd(), workingDir: '/project/packages/svc' }]);
+  });
+
   it('persists a normal command failure result from actor output', async () => {
     const machine = compileRunbookToMachine([commandStep], {
+      commandWorkingDir: process.cwd(),
       commandServices: services({ success: false, exitCode: 2 }),
       evaluationOptions: { cwd: process.cwd() },
       templateVars: {
@@ -101,6 +135,7 @@ describe('compiled machine command execution', () => {
 
   it('stops with policy_denied without converting it to a normal FAIL transition', async () => {
     const machine = compileRunbookToMachine([commandStep], {
+      commandWorkingDir: process.cwd(),
       commandServices: services({
         success: false,
         exitCode: 126,
@@ -147,6 +182,7 @@ describe('compiled machine command execution', () => {
 
   it('stops with command_execution_failed when the command actor throws', async () => {
     const machine = compileRunbookToMachine([commandStep], {
+      commandWorkingDir: process.cwd(),
       commandServices: {
         runExternalCommand: async () => {
           throw new Error('spawn subsystem unavailable');
@@ -227,6 +263,7 @@ describe('compiled machine OUTPUTS derivation', () => {
 
     try {
       const machine = compileRunbookToMachine([substepOutputsStep], {
+        commandWorkingDir: process.cwd(),
         commandServices: {
           runExternalCommand: async (runnerInput) => {
             injected = runnerInput.rdInjected;

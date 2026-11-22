@@ -135,8 +135,9 @@ specify such deny-paths.
 `--policy <file>` is supplied, Rundown MUST load that file directly. Explicit
 policy loading MUST NOT search other policy locations first.
 
-When `--policy` is not supplied, Rundown MUST search for policy configuration in
-this order:
+When `--policy` is not supplied, Rundown MUST search for policy configuration
+starting at the working directory the command was invoked from and walking
+upward, trying these names in each directory in this order:
 
 1. `.rundownrc`
 2. `.rundownrc.json`
@@ -144,10 +145,15 @@ this order:
 4. `.rundownrc.yml`
 5. `package.json` `rundown` field
 
-The search starts in the working directory and walks upward through its
-ancestors. It MUST stop at the user's home directory: a policy file above home
+The upward walk MUST stop at the user's home directory: a policy file above home
 is not discovered. A working directory outside home is searched up to the
 filesystem root.
+
+The search starts at the working directory, not the project root (see
+[cli.md § Project root](cli.md#project-root)), so a policy file between the two
+takes precedence: in a monorepo with `.rundown/` at the root, a command run from
+`packages/svc/` loads `packages/svc/.rundownrc` instead of any policy file at
+the root. The `{repo}` path variable (§6) is the project root either way.
 
 When no policy configuration is found, Rundown MUST use the built-in default
 policy.
@@ -210,7 +216,7 @@ Path patterns MAY use these placeholders:
 
 | Placeholder | Resolves To                                            |
 | ----------- | ------------------------------------------------------ |
-| `{repo}`    | Repository root, defaulting to `process.cwd()`         |
+| `{repo}`    | Project root (see [cli.md](cli.md#project-root))       |
 | `{tmp}`     | System temporary directory, such as `/tmp` or `%TEMP%` |
 
 Command `run` patterns match executable names. File `read` and `write` patterns
@@ -372,7 +378,11 @@ unless they create a session grant through an interactive prompt.
 `--deny-all` MUST win over `--allow-all`.
 
 `--helpers` is an explicit CLI opt-in for helper modules. Helper modules
-supplied through `--helpers` are not treated as auto-discovered configuration.
+supplied through `--helpers` are not treated as auto-discovered configuration. A
+relative `--helpers` path resolves against the working directory the command was
+invoked from. A relative `helpers` path in a policy file resolves against the
+directory holding that policy file. Either way, a helper module outside the
+project root is skipped with a warning.
 
 ## 10. Sandbox Enforcement
 

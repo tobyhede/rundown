@@ -328,6 +328,25 @@ describe('substituteRunbookVariables', () => {
     expect(step.command.code).toBe('git checkout main');
   });
 
+  it('names the work directory absolutely in command text and root-relatively elsewhere', () => {
+    // A step command runs in the run's launch directory, below the project root,
+    // so the root-relative `.rundown/work` would resolve to the wrong place
+    // there. The description reaches a reader, not a shell in another
+    // directory, and keeps the persisted value.
+    const rawMarkdown =
+      '# Test\n\n## 1. Write into {{ WorkPath }}\n\n```bash\nls {{ WorkPath }}\n```';
+    const runbook = parseResolvedRunbook(rawMarkdown);
+    const result = substituteRunbookVariables(
+      runbook,
+      { WorkPath: '.rundown/work' },
+      runnableOptions('/project'),
+    );
+    const step = result.steps[0];
+    assertStepWithCommand(step);
+    expect(step.command.code).toBe('ls /project/.rundown/work');
+    expect(step.description).toBe('Write into .rundown/work');
+  });
+
   it('should preserve undefined variables', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
     const runbook = parseResolvedRunbook(rawMarkdown);

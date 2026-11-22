@@ -3,7 +3,13 @@ import { createTestWorkspace, type TestWorkspace } from '../helpers/test-utils.j
 import { writeFile, symlink, unlink } from 'node:fs/promises';
 import { lstatSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { resolveVariables } from '../../src/services/variable-discovery.js';
+import { type InputFlagEntry, resolveVariables } from '../../src/services/variable-discovery.js';
+
+/** A typed `--input KEY=value` entry, as `parseInputOption` produces it. */
+function typed(flag: string): InputFlagEntry {
+  const eq = flag.indexOf('=');
+  return { origin: 'typed', key: flag.slice(0, eq), value: flag.slice(eq + 1) };
+}
 
 describe('Security: Symlink Traversal', () => {
   let workspace: TestWorkspace;
@@ -37,7 +43,7 @@ describe('Security: Symlink Traversal', () => {
     // It should ideally block this because it points outside the project.
     const result = await resolveVariables(
       {
-        input: [`my_source=file:secret-link`],
+        input: [typed(`my_source=file:secret-link`)],
       },
       workspace.cwd,
     );

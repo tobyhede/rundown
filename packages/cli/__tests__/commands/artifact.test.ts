@@ -74,6 +74,7 @@ describe('artifact command', () => {
       { source: 'project', path: 'workflow.runbook.md' },
       runbook,
       {
+        launchDir: '.',
         runbookPath: 'workflow.runbook.md',
         ownerTokenHash: hashRunSecret(generateOwnerToken()),
         runId: RUN_ID,
@@ -124,6 +125,7 @@ describe('artifact command', () => {
       { source: 'project', path: 'workflow.runbook.md' },
       runbook,
       {
+        launchDir: '.',
         runbookPath: 'workflow.runbook.md',
         ownerTokenHash: hashRunSecret(generateOwnerToken()),
         runId: RUN_ID,

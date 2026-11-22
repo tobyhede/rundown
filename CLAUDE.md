@@ -279,8 +279,10 @@ value.
   `--input-file`. `file:` values are supported in `.rundown/config.yaml` and
   `--input-file` only. Frontmatter `inputs:` declares names only and does not
   carry values
-- File paths must stay within the project root (symlinks resolved, traversal
-  blocked)
+- `file:` and `--input-file` paths typed on the command line are relative to the
+  invocation directory; `file:` values from `.rundown/config.yaml`, an
+  `--input-file`, or `RD_INPUT_*` are relative to the project root. Either way
+  the path must stay within the project root (symlinks resolved)
 - `file:` values are routed into the internal variable store as typed values
   (`JsonArrayStream` for `.jsonl`, `JsonArray`/`JsonObject` for `.json`)
 
@@ -294,9 +296,17 @@ See [Active Development Stance](#active-development-stance) for why the rules
 below hold: there is no state outside this repo for them to protect.
 
 Run and session state persists in `.rundown/rundown.db`. Captured outputs remain
-under `.rundown/runs/<run-id>/outputs/`. Runbook source files are discovered
-from multiple locations (see [Runbook Discovery](#runbook-discovery)). State
-persists across context clears.
+under `.rundown/runs/<run-id>/outputs/`. Both live under the **project root**:
+the nearest directory at or above the working directory that contains an
+existing `.rundown/`, stopping at a git boundary or the filesystem root, else
+the working directory itself (where `rundown run` then creates `.rundown/`). A
+nested `.rundown/` shadows an outer one. `resolveProjectRoot`
+(`packages/core/src/project-root.ts`) is the one resolver; the CLI reads its
+working directory only in `packages/cli/src/helpers/context.ts`
+(`getProjectRoot()`), and the store, runbook discovery, outputs, prune, config,
+policy and the plugin's SubagentStop gate all use that root. Runbook source
+files are discovered from multiple locations (see
+[Runbook Discovery](#runbook-discovery)). State persists across context clears.
 
 <important>
 **Principle:** NEVER migrate persisted runbook state between versions.
@@ -381,8 +391,10 @@ Runbooks are discovered from multiple sources with the following priority
 | Plugin  | `$CLAUDE_PLUGIN_ROOT/runbooks/` | Plugin-provided runbooks |
 | Bundled | CLI package `dist/runbooks/`    | Bundled pattern runbooks |
 
-Directories are scanned recursively, so subdirectory structures like
-`planning/write-plan.runbook.md` are supported.
+`.rundown/runbooks/` is the project root's (see
+[State Persistence](#state-persistence)), so a command run from a subdirectory
+discovers the same project runbooks. Directories are scanned recursively, so
+subdirectory structures like `planning/write-plan.runbook.md` are supported.
 
 ### Namespace Syntax
 

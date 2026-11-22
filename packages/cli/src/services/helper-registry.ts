@@ -91,7 +91,7 @@ export async function validateHelperPath(
  * helpers. Non-function exports, async functions, and reserved built-in helper
  * names are skipped with a warning. Module load failures are warned and skipped.
  *
- * @param paths - Absolute or project-relative paths to JS/ESM modules
+ * @param paths - Absolute paths, or paths relative to `cwd`, of JS/ESM modules
  * @param cwd - Working directory for resolving relative paths
  * @param projectRoot - Canonical project root for traversal validation
  * @returns Populated read-only `HelperRegistry`

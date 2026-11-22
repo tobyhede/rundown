@@ -32,6 +32,7 @@ export * from './logger.js';
 
 // Path layout — single source of truth for the .rundown/ directory structure
 export * from './paths.js';
+export * from './project-root.js';
 
 // Runbook system
 export * from './runbook/index.js';

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,6 +39,9 @@ describe('cli.ts hook entrypoint contract', () => {
   let cwd: string;
   beforeEach(async () => {
     cwd = await mkdtemp(path.join(tmpdir(), 'rd-cli-'));
+    // A git boundary keeps the project-root walk inside this directory, so a
+    // .rundown/ above the temp directory cannot hold the stopping agent.
+    await writeFile(path.join(cwd, '.git'), 'gitdir: /dev/null\n');
   });
   afterEach(async () => {
     await rm(cwd, { recursive: true, force: true });

@@ -168,6 +168,8 @@ export async function launchInlineChild(args: {
         runId: reservation.runId,
         linkage: inlineLinkageFor(parent.state, reservation),
         prompted: parent.state.prompted,
+        // The child's commands run where its parent's do.
+        launchDir: parent.state.launchDir,
         runbookPath: prepared.runbookPath,
         runbookSrc: prepared.runbookSrc,
         templateVars: prepared.templateVars,

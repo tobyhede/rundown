@@ -99,6 +99,7 @@ describe('one mutation, one entry bump', () => {
   function baseState(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
       prompted: false,
+      launchDir: '.',
       id: runId,
       runbook: { source: 'project', path: 'paths.md' },
       runbookPath: 'paths.md',

@@ -3,7 +3,7 @@
 import type { Command } from 'commander';
 import { RunbookStateManager } from '@rundown-org/core';
 import { discoverRunbooks } from '../services/discovery.js';
-import { getCwd, getStepTotal } from '../helpers/context.js';
+import { getProjectRoot, getStepTotal } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { getStatus } from '../helpers/status.js';
@@ -22,7 +22,7 @@ export function registerLsCommand(program: Command): void {
     .action(async (options: { all?: boolean; text?: boolean; tags?: string }) => {
       await withErrorHandling(
         async () => {
-          const cwd = getCwd();
+          const cwd = getProjectRoot();
           const output = new OutputEmitter({ text: options.text, command: 'ls' });
 
           // MODE 1: List available runbooks (--all)

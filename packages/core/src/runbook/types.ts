@@ -853,6 +853,13 @@ export interface RunbookState {
   readonly id: RunId;
   readonly runbook: RunbookRef; // canonical persisted runbook identity
   readonly runbookPath: string; // repo-relative resolved file path
+  /**
+   * The run's launch directory: where `rundown run` was invoked, relative to
+   * the project root (`.` for the root). Step commands execute there, whoever
+   * continues the run; a child run inherits its parent's. See
+   * `runbook/launch-dir.ts`.
+   */
+  readonly launchDir: string;
   readonly title?: string;
   readonly description?: string;
   readonly step: string; // "1" or "ErrorHandler"

@@ -87,6 +87,7 @@ function liveIteration(stepId: string, iteration: number): ForContext {
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
     prompted: false,
+    launchDir: '.',
     templateVars: brandInitialTemplateVarsForTest({}),
     id: brandRunIdForTest('rd_cccccccccccccccccccccccccccccccc'),
     runbook: { source: 'project', path: 'cursor-test.md' },

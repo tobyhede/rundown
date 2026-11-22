@@ -359,6 +359,7 @@ export {
   type CommandInternalRunner,
   type CommandExternalRunner,
 } from './actors/command-exec-actor.js';
+export { isLaunchDir, launchDirFor, resolveLaunchDir, type LaunchDir } from './launch-dir.js';
 export {
   isRunbookComplete,
   isRunbookStopped,

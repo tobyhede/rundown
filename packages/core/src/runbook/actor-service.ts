@@ -63,6 +63,7 @@ import {
   type MachineExecutionObserver,
 } from '../events/execution-observation.js';
 import { deriveExecutionUnitEntry, type ExecutionUnitEntry } from './execution-unit-entry.js';
+import { resolveLaunchDir } from './launch-dir.js';
 import type { StepPosition } from '../events/types.js';
 
 /**
@@ -912,6 +913,7 @@ export class RunbookActorService {
       substepStates: state.substepStates,
       frameEntry: frameEntryCoordinatesOf(state),
       commandServices: this.options.commandServices,
+      commandWorkingDir: resolveLaunchDir(this.manager.cwd, state.launchDir),
       executionObserver,
       ...(progressionAuthority === undefined
         ? {}

@@ -4,6 +4,7 @@ import {
   findUnsupportedComposition,
   forSourceWarnings,
 } from '@rundown-org/core';
+import { getInvocationDir, getProjectRoot } from '../helpers/context.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
   describeUnsupportedComposition,
@@ -21,9 +22,9 @@ export function registerCheckCommand(program: Command): void {
     .option('--text', 'Output as human-readable text')
     .action(async (file: string, options: { text?: boolean }) => {
       const output = new OutputEmitter({ text: options.text, command: 'check' });
-      const cwd = process.cwd();
+      const cwd = getProjectRoot();
 
-      const result = await loadAndParseRunbook(file, cwd);
+      const result = await loadAndParseRunbook(file, cwd, { invocationDir: getInvocationDir() });
 
       if (!result.ok) {
         output.detail(

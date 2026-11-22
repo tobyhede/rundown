@@ -7,6 +7,15 @@ import type {
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import { mockFn } from './typed-mocks.js';
 
+// policy-context imports helpers/context, whose real module needs
+// resolve-runbook exports the mock below does not provide.
+jest.unstable_mockModule('../../src/helpers/context', () => ({
+  getInvocationDir: () => '/test',
+  getProjectRoot: () => '/test',
+  getStepTotal: jest.fn(),
+  findRunbookFile: jest.fn(),
+}));
+
 // Mock resolve-runbook
 jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
   resolveRunbookFile: jest.fn(),

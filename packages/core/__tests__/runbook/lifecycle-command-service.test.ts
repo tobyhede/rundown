@@ -735,6 +735,7 @@ describe('RunbookLifecycleCommandService', () => {
         parseRunbookDocument(MANUAL_THEN_COMMAND).runbook,
         {
           runId,
+          launchDir: '.',
           runbookPath: 'seeded.runbook.md',
           ownerTokenHash: hashRunSecret(token),
           templateVars: { RunId: runId, WorkPath: '.rundown/work', ContextId: `ctx-${runId}` },

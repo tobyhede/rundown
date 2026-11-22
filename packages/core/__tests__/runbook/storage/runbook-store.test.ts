@@ -64,6 +64,7 @@ function freshHash(): SecretHash {
  */
 async function newState(overrides: Partial<RunbookState> = {}): Promise<RunbookState> {
   const state = await manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
+    launchDir: '.',
     runbookPath: 'test.runbook.md',
     ownerTokenHash: freshHash(),
   });

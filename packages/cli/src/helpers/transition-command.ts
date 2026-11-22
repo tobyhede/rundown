@@ -1,7 +1,7 @@
 // packages/cli/src/helpers/transition-command.ts
 
 import type { Command } from 'commander';
-import { getCwd } from './context.js';
+import { getProjectRoot } from './context.js';
 import { withErrorHandling } from './wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
@@ -74,7 +74,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             const token = parseTokenOption(options, def.name, output);
             if (token === undefined) return;
 
-            const cwd = getCwd();
+            const cwd = getProjectRoot();
             const config = def.buildConfig();
 
             // Core owns token resolution, the `--step` contract, the machine

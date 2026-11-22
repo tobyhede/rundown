@@ -131,6 +131,7 @@ describe('runbook store registry', () => {
         steps: [makeBaseStep({ name: '1', description: 'Initial step' })],
       } satisfies Runbook,
       {
+        launchDir: '.',
         runbookPath: 'inert-json.runbook.md',
         ownerTokenHash: hashRunSecret(generateOwnerToken()),
       },

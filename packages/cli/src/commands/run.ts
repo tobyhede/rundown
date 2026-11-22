@@ -8,9 +8,10 @@ import {
   isNodeError,
   getErrorMessage,
   redactRunSecret,
+  launchDirFor,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
-import { getCwd } from '../helpers/context.js';
+import { getInvocationDir, getProjectRoot } from '../helpers/context.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
   parseArtifactJsonOption,
@@ -92,7 +93,7 @@ export function registerRunCommand(program: Command): void {
           index?: string;
           text?: boolean;
           inputFile?: string[];
-          input?: string[];
+          input?: ReturnType<typeof parseInputOption>;
           inputJson?: string[];
           artifacts?: string[];
           artifactsJson?: string[];
@@ -106,7 +107,8 @@ export function registerRunCommand(program: Command): void {
         }
 
         try {
-          const cwd = getCwd();
+          const cwd = getProjectRoot();
+          const invocationDir = getInvocationDir();
           const manager = new RunbookStateManager(cwd);
           const actorService = createCliRunbookActorService(manager);
 
@@ -116,6 +118,9 @@ export function registerRunCommand(program: Command): void {
             manager,
             actorService,
             cwd,
+            // Recorded on the run: its step commands execute where it was
+            // launched, whoever continues it and from wherever.
+            launchDir: launchDirFor(cwd, invocationDir),
             commandStreamOptions,
           };
 
@@ -149,7 +154,9 @@ export function registerRunCommand(program: Command): void {
             artifactsJson: options.artifactsJson,
           };
 
-          const prepResult = await prepareRunnableRunbook(file, inputOpts, cwd);
+          const prepResult = await prepareRunnableRunbook(file, inputOpts, cwd, {
+            invocationDir,
+          });
           if (!prepResult.ok) {
             output.error(prepResult.error, prepResult.code, prepResult.details);
             output.flush();

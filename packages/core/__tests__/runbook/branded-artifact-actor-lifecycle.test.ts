@@ -61,6 +61,7 @@ describe('TrustedArtifactRecord brand survives full RunbookActorService lifecycl
       { source: 'project', path: 'lifecycle-test.md' },
       { title: 'Lifecycle', description: 'lifecycle', steps },
       {
+        launchDir: '.',
         runbookPath: 'lifecycle-test.md',
         ownerTokenHash: hashRunSecret(generateOwnerToken()),
         frontmatterOutputs: [],
@@ -101,6 +102,7 @@ describe('TrustedArtifactRecord brand survives full RunbookActorService lifecycl
       { source: 'project', path: 'lifecycle-test.md' },
       { title: 'Lifecycle', description: 'lifecycle', steps },
       {
+        launchDir: '.',
         runbookPath: 'lifecycle-test.md',
         ownerTokenHash: hashRunSecret(generateOwnerToken()),
         frontmatterOutputs: [],

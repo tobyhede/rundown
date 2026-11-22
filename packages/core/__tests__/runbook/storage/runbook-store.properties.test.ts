@@ -35,6 +35,7 @@ afterEach(async () => {
 
 function baseState(): Promise<RunbookState> {
   return manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
+    launchDir: '.',
     runbookPath: 'test.runbook.md',
     ownerTokenHash: hashRunSecret(generateOwnerToken()),
   });

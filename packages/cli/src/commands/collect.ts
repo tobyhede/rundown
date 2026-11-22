@@ -2,7 +2,7 @@
 
 import type { Command } from 'commander';
 import { CONCURRENT_MODIFICATION_CODE, type LifecycleCollectOutcome } from '@rundown-org/core';
-import { getCwd } from '../helpers/context.js';
+import { getProjectRoot } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
@@ -48,7 +48,7 @@ export function registerCollectCommand(program: Command): void {
           const output = new OutputEmitter({ text: options.text, command: 'collect' });
           const token = parseTokenOption(options, 'collect', output);
           if (token === undefined) return;
-          const cwd = getCwd();
+          const cwd = getProjectRoot();
           const commandStreamOptions = commandStreamOptionsForOutputMode(options.text);
           const { manager, seam } = buildLifecycleSeam(cwd);
 

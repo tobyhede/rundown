@@ -188,6 +188,7 @@ describe('RunbookStateManager', () => {
         mockRunbook,
         {
           ownerTokenHash: freshHash(),
+          launchDir: '.',
           runbookPath: 'test.runbook.md',
         },
       );
@@ -214,7 +215,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
     );
 
     const updated = await manager.update(state.id, {
@@ -254,7 +255,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
     );
 
     await expect(
@@ -278,7 +279,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
     );
 
     const updated = await manager.update(state.id, {
@@ -326,7 +327,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
     );
 
     await expect(
@@ -352,6 +353,7 @@ describe('RunbookStateManager', () => {
       mockRunbook,
       {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'review.runbook.md',
         runbookSrc: '# Review\n\n## 1. Step',
         templateVars: { Plain: 'value' },
@@ -381,7 +383,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
     );
 
     await manager.update(state.id, {
@@ -410,7 +412,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
     );
 
     await manager.update(state.id, { variables: merge({ Foo: 'string-output' }) });
@@ -426,7 +428,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
     );
     await manager.update(state.id, {
       lastAction: makeAggregationLastAction({ type: 'STOP' }),
@@ -439,7 +441,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
     );
 
     await manager.update(state.id, {
@@ -456,7 +458,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
     );
     const entries: Record<string, ArtifactRecord> = {};
     for (let i = 0; i < 120; i++) {
@@ -490,6 +492,7 @@ describe('RunbookStateManager', () => {
         mockRunbook,
         {
           ownerTokenHash: freshHash(),
+          launchDir: '.',
           runbookPath: 'test.runbook.md',
         },
       );
@@ -516,6 +519,7 @@ describe('RunbookStateManager', () => {
         mockRunbook,
         {
           ownerTokenHash: freshHash(),
+          launchDir: '.',
           runbookPath: 'test.runbook.md',
         },
       );
@@ -539,6 +543,7 @@ describe('RunbookStateManager', () => {
         mockRunbook,
         {
           ownerTokenHash: freshHash(),
+          launchDir: '.',
           runbookPath: 'test.runbook.md',
         },
       );
@@ -572,6 +577,7 @@ describe('RunbookStateManager', () => {
         mockRunbook,
         {
           ownerTokenHash: freshHash(),
+          launchDir: '.',
           runbookPath: 'test.runbook.md',
         },
       );
@@ -592,7 +598,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create(
         { source: 'project', path: 'parent.runbook.md' },
         mockRunbook,
-        { ownerTokenHash: freshHash(), runbookPath: 'parent.runbook.md' },
+        { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'parent.runbook.md' },
       );
       const frameKey = buildFrameKey('1');
 
@@ -621,6 +627,7 @@ describe('RunbookStateManager', () => {
         mockRunbook,
         {
           ownerTokenHash: freshHash(),
+          launchDir: '.',
           runbookPath: 'parent.runbook.md',
         },
       );
@@ -642,6 +649,7 @@ describe('RunbookStateManager', () => {
     it('generates canonical rd-prefixed run ids', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
 
@@ -655,6 +663,7 @@ describe('RunbookStateManager', () => {
       // from the one production creation path.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
 
@@ -665,6 +674,7 @@ describe('RunbookStateManager', () => {
     it('accepts prompted option', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         prompted: true,
       });
@@ -677,6 +687,7 @@ describe('RunbookStateManager', () => {
       const runbookRef = { source: 'plugin' as const, path: 'planning/write-plan.runbook.md' };
       const state = await manager.create(runbookRef, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: '../../plugin/runbooks/planning/write-plan.runbook.md',
       });
 
@@ -693,14 +704,17 @@ describe('RunbookStateManager', () => {
     it('list returns all runbook states', async () => {
       await manager.create({ source: 'project', path: 'one.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'one.md',
       });
       await manager.create({ source: 'project', path: 'two.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'two.md',
       });
       await manager.create({ source: 'project', path: 'three.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'three.md',
       });
 
@@ -717,6 +731,7 @@ describe('RunbookStateManager', () => {
     it('delete removes runbook state', async () => {
       const state = await manager.create({ source: 'project', path: 'delete.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'delete.md',
       });
 
@@ -741,6 +756,7 @@ describe('RunbookStateManager', () => {
     it('update persists lastResult', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
 
@@ -761,6 +777,7 @@ describe('RunbookStateManager', () => {
     it('refuses the losing cycle when two updates race on one run, and retries nothing', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
 
@@ -784,6 +801,7 @@ describe('RunbookStateManager', () => {
     it('lands every field when updates are issued one after another', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const keys = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
@@ -802,6 +820,7 @@ describe('RunbookStateManager', () => {
     it('replaces templateVars wholesale when updates.templateVars is defined', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         templateVars: { env: 'staging', port: 3000 },
       });
@@ -820,6 +839,7 @@ describe('RunbookStateManager', () => {
       // the caller supplies none.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
 
@@ -832,6 +852,7 @@ describe('RunbookStateManager', () => {
     it('preserves existing templateVars when updates.templateVars is undefined', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         templateVars: { env: 'staging', port: 3000 },
       });
@@ -844,6 +865,7 @@ describe('RunbookStateManager', () => {
     it('shallow-merges variables when updates.variables is defined', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       await manager.update(state.id, { variables: merge({ A: '1', B: '2' }) });
@@ -856,6 +878,7 @@ describe('RunbookStateManager', () => {
     it('preserves existing variables when updates.variables is undefined', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       await manager.update(state.id, { variables: merge({ A: '1' }) });
@@ -875,6 +898,7 @@ describe('RunbookStateManager', () => {
         mockRunbook,
         {
           ownerTokenHash: freshHash(),
+          launchDir: '.',
           runbookPath: 'test.runbook.md',
           runbookSrc,
         },
@@ -893,6 +917,7 @@ describe('RunbookStateManager', () => {
         mockRunbook,
         {
           ownerTokenHash: freshHash(),
+          launchDir: '.',
           runbookPath: 'test.runbook.md',
         },
       );
@@ -909,6 +934,7 @@ describe('RunbookStateManager', () => {
       async () => {
         await manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
           ownerTokenHash: freshHash(),
+          launchDir: '.',
           runbookPath: 'test.runbook.md',
         });
 
@@ -927,6 +953,7 @@ describe('RunbookStateManager', () => {
     it('persists FOR fields through round-trip', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
 
@@ -981,6 +1008,7 @@ describe('RunbookStateManager', () => {
     it('rejects state with GOTO_NEXT action in lastAction', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
 
@@ -996,6 +1024,7 @@ describe('RunbookStateManager', () => {
     it('rejects state with instance field', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
 
@@ -1010,6 +1039,7 @@ describe('RunbookStateManager', () => {
     it('provides helpful error message for legacy snapshots', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
 
@@ -1043,6 +1073,7 @@ describe('RunbookStateManager', () => {
     ])('refuses %s identically through the loader and the store', async (_label, legacyShape) => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       await writeRawStateJson(state.id, { ...state, ...legacyShape });
@@ -1081,6 +1112,7 @@ describe('RunbookStateManager', () => {
 
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         templateVars: templateVars,
       });
@@ -1102,6 +1134,7 @@ describe('RunbookStateManager', () => {
         mockRunbook,
         {
           ownerTokenHash: freshHash(),
+          launchDir: '.',
           runbookPath: '/abs/demo.runbook.md',
         },
       );
@@ -1130,6 +1163,7 @@ describe('RunbookStateManager', () => {
         mockRunbook,
         {
           ownerTokenHash: freshHash(),
+          launchDir: '.',
           runbookPath: '/abs/demo.runbook.md',
         },
       );
@@ -1143,7 +1177,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create(
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
-        { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+        { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
       );
 
       const updated = await manager.mutate(state.id, (current) => ({
@@ -1159,7 +1193,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create(
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
-        { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+        { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
       );
       const versionBefore = await stateVersionOf(state.id);
 
@@ -1185,7 +1219,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create(
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
-        { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+        { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
       );
       const observed: string[] = [];
 
@@ -1217,7 +1251,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create(
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
-        { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+        { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
       );
 
       const read = await manager.loadWithVersion(state.id);
@@ -1237,7 +1271,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create(
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
-        { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+        { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
       );
       const read = await manager.loadWithVersion(state.id);
       await churn(state.id);
@@ -1252,7 +1286,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create(
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
-        { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+        { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
       );
       const read = await manager.loadWithVersion(state.id);
       await manager.delete(state.id);
@@ -1268,10 +1302,11 @@ describe('RunbookStateManager', () => {
       const state = await manager.create(
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
-        { ownerTokenHash: hashRunSecret(token), runbookPath: 'test.runbook.md' },
+        { ownerTokenHash: hashRunSecret(token), launchDir: '.', runbookPath: 'test.runbook.md' },
       );
       await manager.create({ source: 'project', path: 'other.runbook.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'other.runbook.md',
       });
 
@@ -1286,7 +1321,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create(
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
-        { ownerTokenHash: hashRunSecret(token), runbookPath: 'test.runbook.md' },
+        { ownerTokenHash: hashRunSecret(token), launchDir: '.', runbookPath: 'test.runbook.md' },
       );
       await manager.update(state.id, { lifecycle: 'completed' });
 
@@ -1298,11 +1333,13 @@ describe('RunbookStateManager', () => {
       const hash = freshHash();
       await manager.create({ source: 'project', path: 'a.runbook.md' }, mockRunbook, {
         ownerTokenHash: hash,
+        launchDir: '.',
         runbookPath: 'a.runbook.md',
       });
       await expect(
         manager.create({ source: 'project', path: 'b.runbook.md' }, mockRunbook, {
           ownerTokenHash: hash,
+          launchDir: '.',
           runbookPath: 'b.runbook.md',
         }),
       ).rejects.toThrow(/already carries the owner token hash/);
@@ -1322,7 +1359,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create(
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
-        { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+        { ownerTokenHash: freshHash(), launchDir: '.', runbookPath: 'test.runbook.md' },
       );
 
       const updated = await manager.update(state.id, {
@@ -1381,6 +1418,7 @@ describe('RunbookStateManager', () => {
     ): Promise<string> {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       await writeRawStateJson(state.id, raw(state as unknown as Record<string, unknown>));
@@ -1487,6 +1525,7 @@ describe('RunbookStateManager', () => {
       async ({ prompted }) => {
         const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
           ownerTokenHash: freshHash(),
+          launchDir: '.',
           runbookPath: 'test.md',
           prompted,
         });
@@ -1506,6 +1545,7 @@ describe('RunbookStateManager', () => {
     it('names the run and its stale version when a derivation is refused', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const stale = { ...state, schemaVersion: 99 };

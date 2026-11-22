@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // packages/cli/src/cli.ts
 
+import { beginInvocation, getInvocationDir, getProjectRoot } from './helpers/context.js';
 import { Command, Option } from 'commander';
 import { registerRunCommand } from './commands/run.js';
 import { registerGotoCommand } from './commands/goto.js';
@@ -37,6 +38,7 @@ import {
 
 import { fileURLToPath } from 'node:url';
 import { realpathSync } from 'node:fs';
+import * as path from 'node:path';
 
 // Detect whether this module is the CLI entry point (vs imported for createProgram)
 const isEntryPoint = (() => {
@@ -160,24 +162,41 @@ export function createProgram(deps: ProgramDependencies = {}): Command {
     .addOption(
       new Option(
         '--helpers <paths>',
-        'Helper module paths to load (comma-separated, relative to project root)',
+        'Helper module paths to load (comma-separated, relative to the current directory; must be inside the project root)',
       ).helpGroup('Policy options:'),
     );
 
   // Initialize policy before subcommands
   program.hook('preSubcommand', async (thisCommand) => {
+    // One project-root walk per invocation, shared by policy and the command.
+    beginInvocation();
     const opts = thisCommand.opts();
     const policyOpts = parsePolicyCliOptions(opts);
-    const cwd = process.cwd();
-    await initializePolicyContext(policyOpts, cwd);
-    const configHelpers = getPolicyContext().policy.helpers ?? [];
+    // Policy discovery starts at the invocation directory and walks upward,
+    // so a stricter policy file in a sub-package wins over the root's. The
+    // evaluator's {repo} root and the helper containment boundary are the
+    // project root, like the store (see getProjectRoot).
+    const invocationDir = getInvocationDir();
+    const projectRoot = getProjectRoot();
+    await initializePolicyContext(policyOpts, {
+      searchFrom: invocationDir,
+      repoRoot: projectRoot,
+    });
+    const { policy, configPath } = getPolicyContext();
+    const configHelpers = policy.helpers ?? [];
     const cliHelpers = policyOpts.helpers ?? [];
-    const trustedConfigHelpers = policyOpts.trustJsPolicy ? configHelpers : [];
     if (configHelpers.length > 0 && !policyOpts.trustJsPolicy) {
       console.warn(
         'Warning: Policy-configured helper modules require --trust-js-policy and were skipped.',
       );
     }
+    // A policy file's helper paths are relative to that file, so they are
+    // made absolute here; a --helpers path stays as typed and resolves
+    // against the invocation directory, where the user typed it.
+    const trustedConfigHelpers =
+      policyOpts.trustJsPolicy && configPath !== undefined
+        ? configHelpers.map((p) => path.resolve(path.dirname(configPath), p))
+        : [];
     const allHelperPaths = [...trustedConfigHelpers, ...cliHelpers];
     // Always reset both registries so in-process re-entry (tests, hosts that
     // boot the CLI multiple times) cannot leak helpers from a prior invocation.
@@ -185,7 +204,7 @@ export function createProgram(deps: ProgramDependencies = {}): Command {
     // skipping the call.
     const registry =
       allHelperPaths.length > 0
-        ? await loadHelperModules(allHelperPaths, cwd, cwd)
+        ? await loadHelperModules(allHelperPaths, invocationDir, projectRoot)
         : new Map<string, (value: string) => string>();
     setHelperRegistry(registry);
   });

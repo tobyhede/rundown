@@ -62,6 +62,7 @@ function vars(extra: Record<string, string> = {}) {
 function state(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
     prompted: false,
+    launchDir: '.',
     id: runId,
     runbook: { source: 'project', path: 'entry-test.md' },
     runbookPath: 'entry-test.md',
@@ -143,7 +144,9 @@ describe('deriveExecutionUnitEntry', () => {
 
       if (entered.kind !== 'runnable') throw new Error('expected a runnable unit');
       expect(entered.command.rdInjected).toEqual({
-        RD_WORK_PATH: WORK_DIR,
+        // Absolute under the project root: the command runs in the launch
+        // directory, where the root-relative `.rundown/work` would not resolve.
+        RD_WORK_PATH: '/project/.rundown/work',
         RD_CONTEXT_ID: CONTEXT_ID,
         RD_RUN_ID: runId,
         RD_RUNBOOK_REF: 'entry-test.md',
@@ -171,7 +174,7 @@ describe('deriveExecutionUnitEntry', () => {
       );
 
       if (entered.kind !== 'runnable') throw new Error('expected a runnable unit');
-      expect(entered.command.rdInjected.RD_WORK_PATH).toBe(WORK_DIR);
+      expect(entered.command.rdInjected.RD_WORK_PATH).toBe('/project/.rundown/work');
     });
 
     it('classifies a prompted run awaiting even though the unit carries a command', () => {

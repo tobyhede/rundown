@@ -69,6 +69,10 @@ beforeEach(async () => {
   // stand in for Claude Code, so they set it only where they mean to.
   delete process.env.CLAUDE_PROJECT_DIR;
   cwd = await mkdtemp(path.join(tmpdir(), 'rd-plugin-hooks-'));
+  // A git boundary keeps the project-root walk (resolveProjectRoot) inside
+  // this workspace: without it, a .rundown/ anywhere above the temp directory
+  // would become these tests' project.
+  await writeFile(path.join(cwd, '.git'), 'gitdir: /dev/null\n');
   await writeFile(path.join(cwd, 'parent.runbook.md'), PARENT);
   await writeFile(path.join(cwd, 'child.runbook.md'), CHILD);
 });

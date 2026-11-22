@@ -869,7 +869,7 @@ rd echo --result pass
       await manager.createInlineChild(
         { source: 'project', path: 'child.runbook.md' },
         parseRunbookDocument(CHILD_MARKDOWN).runbook,
-        { runId, linkage, runbookPath: 'child.runbook.md' },
+        { runId, linkage, launchDir: '.', runbookPath: 'child.runbook.md' },
         // Prune is under test, not the machine: insert the draft as is.
         (draft) => Promise.resolve(draft),
       );

@@ -16,6 +16,7 @@ describe('createBridgedEmitter', () => {
       id: 'wf-test' as RunbookState['id'],
       runbook: { source: 'project', path: 'test-runbook.runbook.md' },
       runbookPath: 'test-runbook.runbook.md',
+      launchDir: '.',
       step: '1',
       stepName: 'Step 1',
       retryCount: 0,

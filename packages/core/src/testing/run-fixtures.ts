@@ -89,6 +89,8 @@ export interface SeedRunOptions {
   readonly runbookPath?: string;
   /** Explicit run id; defaults to a freshly generated one. */
   readonly runId?: RunId;
+  /** Launch directory recorded on the run; defaults to the project root (`.`). */
+  readonly launchDir?: string;
   /** Runtime variables seeded into `state.variables`. */
   readonly variables?: Readonly<Record<string, VariableValue>>;
   /** Marks the run as agent-prompted, matching `rundown run --prompted`. */
@@ -165,6 +167,7 @@ export async function seedRun(cwd: string, options: SeedRunOptions = {}): Promis
   const ownerTokenHash = hashRunSecret(ownerToken);
   const state = await manager.create(runbookRef, runbook, {
     runbookPath,
+    launchDir: options.launchDir ?? '.',
     ownerTokenHash,
     runId: options.runId,
     prompted: options.prompted,

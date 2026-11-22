@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {
+  canonicalPath,
   runbooksDir,
   RunbookRefSchema,
   type RunbookRef,
@@ -112,19 +113,9 @@ function isWithinResolvedRoot(root: string, target: string): boolean {
   );
 }
 
-async function realpathOrResolve(filePath: string): Promise<string> {
-  try {
-    return await fs.realpath(filePath);
-  } catch {
-    return path.resolve(filePath);
-  }
-}
-
-async function pathUnderRoot(root: string, target: string): Promise<string | null> {
-  const [realRoot, realTarget] = await Promise.all([
-    realpathOrResolve(root),
-    realpathOrResolve(target),
-  ]);
+function pathUnderRoot(root: string, target: string): string | null {
+  const realRoot = canonicalPath(root);
+  const realTarget = canonicalPath(target);
   if (!isWithinResolvedRoot(realRoot, realTarget)) {
     return null;
   }
@@ -139,7 +130,7 @@ async function resolveAbsolutePath(cwd: string, filename: string): Promise<Resol
     return null;
   }
 
-  const projectRunbookPath = await pathUnderRoot(runbooksDir(cwd), absoluteFilename);
+  const projectRunbookPath = pathUnderRoot(runbooksDir(cwd), absoluteFilename);
   if (projectRunbookPath) {
     return { path: projectRunbookPath, source: 'project', sourceRoot: cwd };
   }
@@ -147,19 +138,19 @@ async function resolveAbsolutePath(cwd: string, filename: string): Promise<Resol
   const pluginRoot = getPluginRoot();
   const pluginRunbooksDir = pluginRoot ? path.join(pluginRoot, 'runbooks') : null;
   if (pluginRunbooksDir) {
-    const pluginRunbookPath = await pathUnderRoot(pluginRunbooksDir, absoluteFilename);
+    const pluginRunbookPath = pathUnderRoot(pluginRunbooksDir, absoluteFilename);
     if (pluginRunbookPath) {
       return { path: pluginRunbookPath, source: 'plugin', sourceRoot: pluginRunbooksDir };
     }
   }
 
   const bundledRunbooksDir = getBundledRunbooksPath();
-  const bundledRunbookPath = await pathUnderRoot(bundledRunbooksDir, absoluteFilename);
+  const bundledRunbookPath = pathUnderRoot(bundledRunbooksDir, absoluteFilename);
   if (bundledRunbookPath) {
     return { path: bundledRunbookPath, source: 'bundled', sourceRoot: bundledRunbooksDir };
   }
 
-  const projectPath = await pathUnderRoot(cwd, absoluteFilename);
+  const projectPath = pathUnderRoot(cwd, absoluteFilename);
   if (projectPath) {
     return { path: projectPath, source: 'project', sourceRoot: cwd };
   }
@@ -302,6 +293,11 @@ export interface ResolveRunbookFileOptions {
    * tried relative to this file's directory, last.
    */
   readonly composedFrom?: string;
+  /**
+   * Directory a relative runbook path is tried against after the project and
+   * plugin runbooks: where the user typed it. Defaults to the project root.
+   */
+  readonly invocationDir?: string;
 }
 
 /**
@@ -328,7 +324,7 @@ async function resolveBesideComposer(
   // A sibling stays inside the root its composer was found in; a path that
   // climbs out of it is not resolved.
   const composer = await resolveAbsolutePath(cwd, composedFrom);
-  if (composer === null || (await pathUnderRoot(composer.sourceRoot, candidate)) === null) {
+  if (composer === null || pathUnderRoot(composer.sourceRoot, candidate) === null) {
     return null;
   }
   return resolveAbsolutePath(cwd, candidate);
@@ -344,7 +340,7 @@ async function resolveBesideComposer(
  * Search order for path mode:
  * 1. .rundown/runbooks/ (project-local)
  * 2. $CLAUDE_PLUGIN_ROOT/runbooks/ (plugin directory)
- * 3. Relative to cwd
+ * 3. Relative to `options.invocationDir` (default: the project root)
  * 4. Bundled runbooks
  *
  * Search order for name mode (no namespace):
@@ -358,9 +354,10 @@ async function resolveBesideComposer(
  * Namespace mode (e.g., rundown:write-plan):
  * - Searches only in the specified source (plugin for 'rundown' namespace)
  *
- * @param cwd - Current working directory
+ * @param cwd - Project root: the project runbooks and persisted references live under it
  * @param identifier - Runbook filename, name, or namespaced name to find
- * @param options - Resolution options; `composedFrom` names the composing runbook
+ * @param options - Resolution options; `composedFrom` names the composing runbook,
+ *   `invocationDir` the directory a relative path is tried against
  * @returns Resolved runbook with path and source, or null if not found
  * @throws {Error} May throw filesystem errors if directory access fails unexpectedly
  */
@@ -387,7 +384,7 @@ export async function resolveRunbookFile(
     return resolveAbsolutePath(cwd, name);
   }
 
-  const located = await locateRunbook(runtimeSearchRoots(cwd), name);
+  const located = await locateRunbook(runtimeSearchRoots(cwd, options.invocationDir), name);
   if (!located) {
     return options.composedFrom !== undefined && isPathIdentifier(name)
       ? resolveBesideComposer(cwd, options.composedFrom, name)
@@ -402,12 +399,12 @@ export async function resolveRunbookFile(
       };
 }
 
-async function resolvedFromDiscovered(
+function resolvedFromDiscovered(
   cwd: string,
   discovered: { path: string; source: DiscoverableRunbookSource },
-): Promise<ResolvedRunbook> {
+): ResolvedRunbook {
   const sourceRoot = sourceRootForDiscovered(cwd, discovered.source);
-  const normalizedPath = (await pathUnderRoot(sourceRoot, discovered.path)) ?? discovered.path;
+  const normalizedPath = pathUnderRoot(sourceRoot, discovered.path) ?? discovered.path;
   return {
     path: normalizedPath,
     source: discovered.source,
@@ -435,8 +432,8 @@ function sourceRootForDiscovered(cwd: string, source: DiscoverableRunbookSource)
   }
 }
 
-async function toSourceRootRelativePath(filePath: string, sourceRoot: string): Promise<string> {
-  const safePath = await pathUnderRoot(sourceRoot, filePath);
+function toSourceRootRelativePath(filePath: string, sourceRoot: string): string {
+  const safePath = pathUnderRoot(sourceRoot, filePath);
   if (safePath === null) {
     throw new Error(`Resolved runbook path is outside ${sourceRoot}: ${filePath}`);
   }
@@ -452,11 +449,11 @@ async function toSourceRootRelativePath(filePath: string, sourceRoot: string): P
   return relative;
 }
 
-async function derivePersistedRunbookRef(
+function derivePersistedRunbookRef(
   filePath: string,
   source: RunbookSource,
   sourceRoot: string,
-): Promise<RunbookRef> {
+): RunbookRef {
   if (source === 'external') {
     return RunbookRefSchema.parse({
       source,
@@ -466,7 +463,7 @@ async function derivePersistedRunbookRef(
 
   return RunbookRefSchema.parse({
     source,
-    path: await toSourceRootRelativePath(filePath, sourceRoot),
+    path: toSourceRootRelativePath(filePath, sourceRoot),
   });
 }
 
@@ -477,7 +474,7 @@ async function derivePersistedRunbookRef(
  * @returns Canonical `RunbookRef` derived from the resolved file and validated by `RunbookRefSchema`
  * @throws {Error} If the resolved file cannot be represented as a safe source-root-relative Markdown path
  */
-export async function buildRunbookRef(resolved: ResolvedRunbook): Promise<RunbookRef> {
+export function buildRunbookRef(resolved: ResolvedRunbook): RunbookRef {
   return derivePersistedRunbookRef(resolved.path, resolved.source, resolved.sourceRoot);
 }
 

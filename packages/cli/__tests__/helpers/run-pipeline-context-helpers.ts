@@ -10,6 +10,7 @@ export interface RunPipelineContextOverrides {
   manager?: Partial<RunbookStateManager>;
   actorService?: Partial<RunbookActorService>;
   cwd?: string;
+  launchDir?: string;
 }
 
 /**
@@ -48,5 +49,6 @@ export function makeRunPipelineContext(
       ...overrides.actorService,
     } as unknown as RunbookActorService,
     cwd: overrides.cwd ?? '/test',
+    launchDir: overrides.launchDir ?? '.',
   };
 }

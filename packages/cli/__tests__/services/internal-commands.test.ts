@@ -93,6 +93,7 @@ rd echo test
 
       // Create the run row owned by a fresh token
       const state = await manager.create({ source: 'project', path: 'test.runbook.md' }, runbook, {
+        launchDir: '.',
         runbookPath: 'test.runbook.md',
         prompted: true,
         ownerTokenHash: hashRunSecret(generateOwnerToken()),

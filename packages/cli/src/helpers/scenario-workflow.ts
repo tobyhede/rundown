@@ -297,11 +297,17 @@ export interface ScenarioRunResult {
  * Returns a result type instead of calling process.exit().
  *
  * @param file - Runbook file path or name
- * @param cwd - Current working directory
+ * @param cwd - Project root
+ * @param invocationDir - Directory a relative runbook path is tried against;
+ *   defaults to the project root
  * @returns ScenarioLoadResult with loaded data or error details
  */
-export async function loadScenarios(file: string, cwd: string): Promise<ScenarioLoadResult> {
-  const resolved = await resolveRunbookFile(cwd, file);
+export async function loadScenarios(
+  file: string,
+  cwd: string,
+  invocationDir: string = cwd,
+): Promise<ScenarioLoadResult> {
+  const resolved = await resolveRunbookFile(cwd, file, { invocationDir });
 
   if (!resolved) {
     return { ok: false, error: `Runbook file not found: ${file}`, code: 'RUNBOOK_NOT_FOUND' };

@@ -54,11 +54,15 @@ interface SearchPath {
  * both resolve through one implementation.
  */
 export interface RunbookSearchRoots {
-  /** The project's runbooks directory (`<cwd>/.rundown/runbooks`), or null when there is none. */
+  /** The project's runbooks directory (`<project root>/.rundown/runbooks`), or null when there is none. */
   readonly project: string | null;
   /** The plugin root (`$CLAUDE_PLUGIN_ROOT`); its runbooks live under `<plugin>/runbooks`. */
   readonly plugin: string | null;
-  /** The directory a relative runbook path is tried against after the plugin, or null to skip it. */
+  /**
+   * The directory a relative runbook path is tried against after the plugin —
+   * where the CLI was invoked, which may be below the project root — or null
+   * to skip it.
+   */
   readonly cwd: string | null;
   /** The bundled runbooks directory, searched last. */
   readonly bundled: string;
@@ -67,14 +71,17 @@ export interface RunbookSearchRoots {
 /**
  * The search roots the runtime resolves runbooks from in this process.
  *
- * @param cwd - Current working directory
- * @returns Project runbooks under `cwd`, the plugin root, `cwd`, and the bundled runbooks
+ * @param cwd - Project root (see `getProjectRoot`)
+ * @param invocationDir - Directory a relative runbook path is tried against
+ *   after the plugin: where the CLI was invoked. Defaults to the project root.
+ * @returns Project runbooks under the project root, the plugin root, the
+ *   invocation directory, and the bundled runbooks
  */
-export function runtimeSearchRoots(cwd: string): RunbookSearchRoots {
+export function runtimeSearchRoots(cwd: string, invocationDir: string = cwd): RunbookSearchRoots {
   return {
     project: runbooksDir(cwd),
     plugin: getPluginRoot(),
-    cwd,
+    cwd: invocationDir,
     bundled: getBundledRunbooksPath(),
   };
 }
