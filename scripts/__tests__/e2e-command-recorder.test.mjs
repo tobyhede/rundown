@@ -47,11 +47,13 @@ if (mode === 'emit') {
   process.stdout.write('before signal');
   process.kill(process.pid, rest[0]);
 } else if (mode === 'wait') {
-  process.stdout.write('ready\\n');
+  // The handler goes in before "ready" is printed. A caller that signals on
+  // "ready" must never reach a process that still has the default action.
   process.on('SIGTERM', () => {
     process.stdout.write('got SIGTERM');
     process.exit(7);
   });
+  process.stdout.write('ready\\n');
   setInterval(() => {}, 1000);
 }
 `;
