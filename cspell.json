@@ -35,6 +35,7 @@
     "packages/core/__tests__/fixtures/persisted-state-shape/*.txt",
     "package-lock.json",
     "*.json",
+    "*.jsonl",
     "*.yaml",
     "*.yml",
     "patches"

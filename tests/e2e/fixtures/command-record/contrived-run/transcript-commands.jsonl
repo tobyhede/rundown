@@ -1,0 +1,3 @@
+{"source":"main","session":"projects/-tmp-test-workspace/0e9dae1e-214c-4039-bffc-98ecff2d94a0.jsonl","at":"2026-11-23T01:38:32.392Z","tool_use_id":"toolu_01T5e2rbBPbCvq1xdej42HKw","command":"rundown ls; echo \"EXIT=$?\""}
+{"source":"main","session":"projects/-tmp-test-workspace/0e9dae1e-214c-4039-bffc-98ecff2d94a0.jsonl","at":"2026-11-23T01:38:43.427Z","tool_use_id":"toolu_015K2o3sVhnhc4bT3oK7NwxK","command":"rundown run nested-check.runbook.md --yes; echo \"EXIT=$?\""}
+{"source":"sub-agent","session":"0e9dae1e-214c-4039-bffc-98ecff2d94a0/subagents/agent-a2c2cbb49e4891095.jsonl","at":"2026-11-23T01:38:38.487Z","tool_use_id":"toolu_019JB4AFzgy1tFgxy8mcBnHK","command":"rundown status; echo \"EXIT=$?\""}
