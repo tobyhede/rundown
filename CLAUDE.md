@@ -683,10 +683,16 @@ Issues live in GitHub Issues on `tobyhede/rundown`, driven via the `gh` CLI. See
 
 **Witness rule.** Open an issue only with a witness. A defect needs a failing
 test that pins its claim, committed or on a named branch, and linked from the
-issue. A design question needs the decision it blocks on, stated. A finding
-without a witness goes to the user in the conversation, or as a comment on the
-existing issue it concerns — never as a new issue. Epic bodies carry order and
-state only; the sub-issue tree is membership, and for a defect the test is the
+issue. Agent confusion seen in a case run (rundown refused correctly and the
+agent went wrong,
+[ADR 0007](docs/adr/0007-observed-agent-runs-are-the-primary-oracle.md)) has no
+deterministic test: its witness is the redacted verdict of one failing run and a
+failure-rate table over at least 5 runs of the case, both pasted into the issue,
+and the fix is shown by the same table over at least 5 runs after the change. A
+design question needs the decision it blocks on, stated. A finding without a
+witness goes to the user in the conversation, or as a comment on the existing
+issue it concerns — never as a new issue. Epic bodies carry order and state
+only; the sub-issue tree is membership, and for a defect the test is the
 citation.
 
 ### Triage labels

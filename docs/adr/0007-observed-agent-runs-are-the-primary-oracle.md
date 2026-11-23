@@ -21,11 +21,14 @@ A failure seen there is reduced to a deterministic scenario, which is the
 witness the issue tracker already requires; the fix is made against the
 scenario, then confirmed by running the case again.
 
-The verdict is computed outside the packages, from what the CLI printed: the
-agent's transcript, which carries every `rundown` command and its JSON envelope,
-and a read-only `rundown status` taken as the container exits. It never reads
-`.rundown/rundown.db` and never re-derives run state. The database is copied out
-as evidence only.
+The verdict is computed outside the packages, from what the CLI printed: a
+**command record** holding every `rundown` invocation in the container with its
+arguments, output and exit code, and a read-only `rundown status` taken as the
+container exits. A wrapper ahead of the real `rundown` and `rd` on `PATH` writes
+the record. The agent's transcript is kept for diagnosis and is not a verdict
+input: it loses exit codes when the agent pipes or chains commands, and it is
+specific to one agent. The verdict never reads `.rundown/rundown.db` and never
+re-derives run state. The database is copied out as evidence only.
 
 ## Considered options
 
@@ -38,13 +41,15 @@ as evidence only.
 - **Compute the verdict from the database, or persist an event log in core.**
   Rejected for now: reading state directly would put a second reading of run
   state outside the state machine, and an event log is a core design change this
-  decision does not need. The transcript already is the event log.
+  decision does not need. The command record already is the event log.
 
 ## Consequences
 
 - A failure where rundown refused correctly and the agent was confused has no
   deterministic witness. It is pinned only by its rate across repeated case
-  runs, and the fix is in a skill or an error message, not in core.
+  runs, and the fix is in a skill or an error message, not in core. Its witness
+  in the issue tracker is the redacted verdict and the rate table, pasted into
+  the issue.
 - Case runs cost minutes and model usage, and their result varies between runs.
   They do not belong in `pnpm run verify`.
 - A "passes end to end" claim for agent-facing work needs a case run to back it.
