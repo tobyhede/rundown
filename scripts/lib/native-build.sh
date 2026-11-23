@@ -15,7 +15,9 @@
 
 build_native_binaries() {
   fallback_hint="$1"
-  if ! command -v cargo >/dev/null 2>&1 || ! cargo zigbuild --version >/dev/null 2>&1; then
+  # Probe with `--help`: the `zigbuild` subcommand has no `--version`, so
+  # `cargo zigbuild --version` fails even when cargo-zigbuild is installed.
+  if ! command -v cargo >/dev/null 2>&1 || ! cargo zigbuild --help >/dev/null 2>&1; then
     log "ERROR: building the rd-landlock native binaries requires the Rust toolchain"
     log "       and cargo-zigbuild. Install rustup + the musl targets and"
     log "       'cargo install --locked cargo-zigbuild' (see native/rd-landlock/rust-toolchain.toml),"
