@@ -87,6 +87,30 @@ pnpm run cli -- run packages/cli/__tests__/fixtures/simple.runbook.md --allow-ru
   (`npm install -g @rundown-org/cli`) and the Docker e2e fixtures, not for
   monorepo development.
 
+- **Native build tools** (only for the Docker tests): `pnpm run verify:claude`
+  and the `pnpm run test:e2e*` commands build the `native/rd-landlock` binaries
+  for Linux, which needs Rust, zig and cargo-zigbuild. Unit tests, lint and
+  `pnpm run verify` do not need them.
+  - Rust: install [rustup](https://rustup.rs). It reads
+    `native/rd-landlock/rust-toolchain.toml` and installs the pinned toolchain
+    and the two musl targets the first time `cargo` runs in that directory.
+  - zig and cargo-zigbuild: the root `mise.toml` pins both. Install
+    [mise](https://mise.jdx.dev), then run this once in the repository root:
+
+    ```bash
+    mise trust     # allow mise to read this repository's mise.toml
+    mise install   # install the pinned zig and cargo-zigbuild
+    ```
+
+    `mise trust` is needed once per clone and once per git worktree. If mise is
+    not activated in your shell, prefix the Docker test commands with
+    `mise exec --`, for example `mise exec -- pnpm run test:e2e:build`.
+
+  CI installs the same two versions in
+  `.github/actions/setup-rust-zigbuild/action.yml`. To change a version, change
+  it in both files: `scripts/__tests__/native-toolchain-pins.test.mjs` fails
+  when they disagree.
+
 ### Initialization
 
 1. Clone the repository:
@@ -216,7 +240,8 @@ pnpm exec playwright install
 
 Docker-based tests verify installation and plugin integration in clean Linux
 containers. See [docs/internal/docker.md](docs/internal/docker.md) for full
-details.
+details. They need the native build tools listed under
+[Prerequisites](#prerequisites).
 
 ```bash
 pnpm run verify:claude    # Verify CLI+plugin install (local build)

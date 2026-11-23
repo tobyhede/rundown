@@ -11,7 +11,8 @@
 # packages/core/dist/native/. `pnpm run build` is bare `tsc` and does NOT
 # produce them, but core's `prepack` (scripts/assert-native.mjs) requires both
 # static ELF binaries, so `pnpm pack` on core aborts without this step.
-# Needs the pinned Rust toolchain + Zig/cargo-zigbuild.
+# Needs the pinned Rust toolchain (native/rd-landlock/rust-toolchain.toml) and
+# the Zig and cargo-zigbuild versions pinned in mise.toml.
 
 build_native_binaries() {
   fallback_hint="$1"
@@ -19,8 +20,10 @@ build_native_binaries() {
   # `cargo zigbuild --version` fails even when cargo-zigbuild is installed.
   if ! command -v cargo >/dev/null 2>&1 || ! cargo zigbuild --help >/dev/null 2>&1; then
     log "ERROR: building the rd-landlock native binaries requires the Rust toolchain"
-    log "       and cargo-zigbuild. Install rustup + the musl targets and"
-    log "       'cargo install --locked cargo-zigbuild' (see native/rd-landlock/rust-toolchain.toml),"
+    log "       and cargo-zigbuild. Install rustup (native/rd-landlock/rust-toolchain.toml"
+    log "       pins the toolchain and the musl targets), then run 'mise trust' and"
+    log "       'mise install' in the repository root for the zig and cargo-zigbuild"
+    log "       versions pinned in mise.toml,"
     log "       $fallback_hint"
     return 1
   fi
