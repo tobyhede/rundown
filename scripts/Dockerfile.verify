@@ -106,6 +106,27 @@ COPY --chown=testuser:testuser .agents/plugins/marketplace.json /usr/local/share
 # project workspaces during the normal plugin-based Stage 1 flow.
 COPY --chmod=644 scripts/e2e-codex-agents.md /usr/local/share/rundown/codex-agents.md
 
+# Command recorder (ADR 0007). It takes the place of `rundown` and `rd` in
+# /usr/local/bin, so every call that goes through PATH is recorded, including
+# calls from a login shell, which resets PATH from /etc/profile. The real bins
+# are kept in the `real` directory beside the recorder, where it looks first.
+# Everything is under /usr, which a Landlock-sandboxed step command may read and
+# execute. The record is under /tmp, which the built-in policy lets a sandboxed
+# step command write; e2e-entrypoint.sh copies it to the mounted logs directory
+# when the run ends.
+COPY --chmod=755 scripts/e2e-command-recorder.mjs /usr/local/lib/rundown-command-recorder/e2e-command-recorder.mjs
+RUN set -eu; \
+    recorder=/usr/local/lib/rundown-command-recorder; \
+    mkdir "$recorder/real"; \
+    for name in rundown rd; do \
+      ln -s "$(realpath "/usr/local/bin/$name")" "$recorder/real/$name"; \
+      ln -sf "$recorder/e2e-command-recorder.mjs" "/usr/local/bin/$name"; \
+    done; \
+    test "$("$recorder/real/rundown" --version)" = "$(RUNDOWN_COMMAND_RECORD=/tmp/recorder-build-check.jsonl rundown --version)"; \
+    grep -q '"name":"rundown"' /tmp/recorder-build-check.jsonl; \
+    rm /tmp/recorder-build-check.jsonl
+ENV RUNDOWN_COMMAND_RECORD="/tmp/rundown-command-record/commands.jsonl"
+
 # Copy test app fixture
 COPY --chown=testuser:testuser tests/e2e/fixtures/test-app /home/testuser/fixture
 
