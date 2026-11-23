@@ -116,7 +116,36 @@ Tests the full plugin workflow: `claude -p` triggers hook dispatch, the
 application.
 
 **Prerequisites:** Docker, Claude Code credentials (mandatory — exits with error
-if missing).
+if missing), and the native build tools below.
+
+**Native build tools:** `scripts/build-e2e.sh` builds the `native/rd-landlock`
+binaries for Linux on the host before it builds the image
+(`scripts/lib/native-build.sh`). That build needs three tools, each pinned in
+one file:
+
+| Tool           | Version | Pinned in                                |
+| -------------- | ------- | ---------------------------------------- |
+| Rust           | 1.83.0  | `native/rd-landlock/rust-toolchain.toml` |
+| zig            | 0.13.0  | `mise.toml`                              |
+| cargo-zigbuild | 0.19.8  | `mise.toml`                              |
+
+On a fresh clone, install [rustup](https://rustup.rs) and
+[mise](https://mise.jdx.dev), then run this once in the repository root:
+
+```bash
+mise trust     # allow mise to read this repository's mise.toml
+mise install   # install the pinned zig and cargo-zigbuild
+```
+
+rustup installs the pinned Rust toolchain and the musl targets the first time
+`cargo` runs in `native/rd-landlock`. `mise trust` is needed once per clone and
+once per git worktree. If mise is not activated in your shell, run the E2E
+commands through it: `mise exec -- pnpm run test:e2e:build`.
+
+CI installs the same zig and cargo-zigbuild versions in
+`.github/actions/setup-rust-zigbuild/action.yml`.
+`scripts/__tests__/native-toolchain-pins.test.mjs` fails when that file and
+`mise.toml` disagree.
 
 Persisted runbook state follows the repository no-migration rule in E2E runs
 too. If state from a previous run is stale or incompatible, finish or close the
