@@ -24,11 +24,12 @@ scenario, then confirmed by running the case again.
 The verdict is computed outside the packages, from what the CLI printed: a
 **command record** holding every `rundown` invocation in the container with its
 arguments, output and exit code, and a read-only `rundown status` taken as the
-container exits. A wrapper ahead of the real `rundown` and `rd` on `PATH` writes
-the record. The agent's transcript is kept for diagnosis and is not a verdict
-input: it loses exit codes when the agent pipes or chains commands, and it is
-specific to one agent. The verdict never reads `.rundown/rundown.db` and never
-re-derives run state. The database is copied out as evidence only.
+container exits. A wrapper that takes the place of the real `rundown` and `rd`
+on `PATH` writes the record. The agent's transcript is kept for diagnosis and is
+not a verdict input: it loses exit codes when the agent pipes or chains
+commands, and it is specific to one agent. The verdict never reads
+`.rundown/rundown.db` and never re-derives run state. The database is copied out
+as evidence only.
 
 ## Considered options
 

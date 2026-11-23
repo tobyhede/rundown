@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # e2e-entrypoint.sh — Container entrypoint for E2E test harness
-# Validates the full plugin workflow: claude -p → /writing-plans skill → agent runs rd run → runbook execution
+# Validates the full plugin workflow: claude -p with a planning task → writing-plans skill → agent runs rundown run → runbook execution
 set -euo pipefail
 
 LOG_DIR="$HOME/logs"
@@ -15,6 +15,26 @@ fail() { log "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
 hr()   { log "────────────────────────────────────────────────────────────"; }
 
 FAILURES=0
+
+# ── Command record ───────────────────────────────────────────────────────────
+# The image installs scripts/e2e-command-recorder.mjs as `rundown` and `rd` on
+# PATH, in place of the real bins. It appends one JSON line per call to
+# $RUNDOWN_COMMAND_RECORD, which is under /tmp because that is where the default
+# policy lets a sandboxed step command write. Copy the record to the mounted
+# logs directory on every exit path, so the host keeps it.
+RUN_STAMP="$(date +%Y%m%d-%H%M%S)"
+COMMAND_RECORD="${RUNDOWN_COMMAND_RECORD:-}"
+COMMAND_RECORD_COPY="$LOG_DIR/command-record-${RUN_STAMP}.jsonl"
+
+save_command_record() {
+  if [ -n "$COMMAND_RECORD" ] && [ -f "$COMMAND_RECORD" ]; then
+    cp "$COMMAND_RECORD" "$COMMAND_RECORD_COPY" \
+      || log "WARN: could not copy the command record to $COMMAND_RECORD_COPY"
+  else
+    log "WARN: no command record to copy (RUNDOWN_COMMAND_RECORD='${COMMAND_RECORD}')"
+  fi
+}
+trap save_command_record EXIT
 
 # ── 0. Fix Claude Code config path ──────────────────────────────────────────
 # Claude Code expects .claude.json at $HOME/.claude.json but the volume mount
@@ -56,6 +76,18 @@ pass "Fixture tests"
 git add -A
 git commit --quiet -m "Initial commit"
 pass "Workspace prepared at $WORKSPACE"
+
+# The fixture must arrive with no rundown state. Phase 5 reads .rundown to
+# decide whether the agent ran a runbook, so state left by an earlier run would
+# pass that phase when the agent ran nothing. .dockerignore keeps the fixture's
+# git-ignored leftovers out of the image; this check fails the run if any
+# arrive another way.
+if [ -e "$WORKSPACE/.rundown" ]; then
+  fail "The fixture holds rundown state before the agent ran: $WORKSPACE/.rundown"
+  log "Remove tests/e2e/fixtures/test-app/.rundown from the image build context."
+  exit 1
+fi
+pass "Workspace holds no rundown state"
 
 # ── 2. Resolve plugin directory ──────────────────────────────────────────────
 
@@ -136,6 +168,82 @@ fi
 
 rm -rf "$SANDBOX_WS"
 
+# ── 2c. Verify the command recorder ──────────────────────────────────────────
+# Credential-free: runs a sandboxed step command that itself calls `rundown`,
+# then reads the command record. The outer `rd run` must be recorded as
+# top-level and the step's `rundown --version` as nested inside it. This is the
+# proof that a nested call can reach the recorder and write the record under
+# the built-in policy's environment filter and Landlock allow-list.
+
+hr
+log "Phase 2c: Verifying the command recorder..."
+
+RECORDER_WS="$(mktemp -d)"
+RECORDER_OUT="$LOG_DIR/recorder-check.json"
+RECORDER_ERR="$LOG_DIR/recorder-check.err"
+cat > "$RECORDER_WS/recorder-check.runbook.md" <<'RUNBOOK'
+# Command Recorder Check
+
+## 1. Call rundown from a sandboxed step command
+- PASS COMPLETE
+- FAIL STOP
+
+```bash
+rundown --version
+```
+RUNBOOK
+
+if [ -z "$COMMAND_RECORD" ]; then
+  fail "RUNDOWN_COMMAND_RECORD is not set — the image does not configure the command recorder"
+else
+  set +e
+  ( cd "$RECORDER_WS" && rd run recorder-check.runbook.md --yes ) >"$RECORDER_OUT" 2>"$RECORDER_ERR"
+  rc=$?
+  set -e
+  cat "$RECORDER_OUT" "$RECORDER_ERR" >> "$LOG_FILE" 2>/dev/null || true
+
+  if [ "$rc" -ne 0 ]; then
+    fail "rd run recorder-check.runbook.md exited with code $rc (see $RECORDER_OUT / $RECORDER_ERR)"
+  fi
+
+  if grep -Eq '"sandboxed":[[:space:]]*true' "$RECORDER_OUT"; then
+    pass "Recorder check step executed under the Landlock sandbox (sandboxed: true)"
+  else
+    fail "Recorder check step did not report sandboxed: true (see $RECORDER_OUT)"
+  fi
+
+  set +e
+  node - "$COMMAND_RECORD" <<'CHECK' 2>&1 | tee -a "$LOG_FILE"
+const { readFileSync } = require('node:fs');
+const entries = readFileSync(process.argv[2], 'utf-8')
+  .split('\n')
+  .filter((line) => line !== '')
+  .map((line) => JSON.parse(line));
+const outer = entries.findLast(
+  (entry) => entry.name === 'rd' && entry.args.includes('recorder-check.runbook.md'),
+);
+if (!outer) throw new Error('no entry for the outer `rd run recorder-check.runbook.md`');
+if (outer.nested) throw new Error('the outer `rd run` is recorded as nested');
+const inner = entries.find((entry) => entry.parent_id === outer.id);
+if (!inner) throw new Error('no entry for the `rundown --version` step command');
+if (inner.name !== 'rundown' || inner.args.join(' ') !== '--version') {
+  throw new Error(`unexpected nested entry: ${inner.name} ${inner.args.join(' ')}`);
+}
+if (!inner.nested) throw new Error('the step command is not recorded as nested');
+if (inner.exit_code !== 0) throw new Error(`the step command exited ${inner.exit_code}`);
+console.log(`nested call recorded: ${inner.name} ${inner.args.join(' ')} -> ${inner.stdout.trim()}`);
+CHECK
+  rc=${PIPESTATUS[0]}
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    pass "Command record holds the outer call as top-level and the step command as nested"
+  else
+    fail "Command record check failed (record: $COMMAND_RECORD)"
+  fi
+fi
+
+rm -rf "$RECORDER_WS"
+
 # ── 3. Check credentials ─────────────────────────────────────────────────────
 
 hr
@@ -155,13 +263,17 @@ fi
 # ── 4. Run claude -p ─────────────────────────────────────────────────────────
 
 hr
-log "Phase 4: Running claude -p with /writing-plans skill (agent follows skill body to start runbook)..."
+log "Phase 4: Running claude -p with a planning task (the agent is expected to reach write-plan through the writing-plans skill)..."
 
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 WORKFLOW_LOG="$LOG_DIR/workflow-${TIMESTAMP}.jsonl"
 DEBUG_LOG="$LOG_DIR/debug-${TIMESTAMP}.log"
 
-PROMPT="Invoke the end-to-end-testing skill: Skill(skill: \"rundown:end-to-end-testing\"). Target workflow: planning/write-plan.runbook.md. Task: Add a health check endpoint at GET /health that returns JSON with status and database connectivity"
+# The agent is given a planning task and nothing else. It is expected to reach
+# planning/write-plan.runbook.md through the plugin's writing-plans skill. The
+# prompt names no skill, runbook or command: whether the skills are enough to
+# get the agent there is part of what the run shows.
+PROMPT="Write an implementation plan for this task: Add a health check endpoint at GET /health that returns JSON with status and database connectivity"
 
 set +e
 timeout 600 claude -p "$PROMPT" \
