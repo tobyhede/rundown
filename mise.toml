@@ -1,0 +1,15 @@
+# Native build tools for native/rd-landlock, read by mise (https://mise.jdx.dev).
+# Run `mise trust` then `mise install` in the repository root to get them.
+#
+# Only zig and cargo-zigbuild are pinned here. Node is pinned by .nvmrc, pnpm by
+# `packageManager` in package.json, and Rust by
+# native/rd-landlock/rust-toolchain.toml.
+#
+# CI installs the same two versions in
+# .github/actions/setup-rust-zigbuild/action.yml.
+# scripts/__tests__/native-toolchain-pins.test.mjs fails when the two files
+# disagree.
+
+[tools]
+zig = "0.13.0"
+"cargo:cargo-zigbuild" = "0.19.8"

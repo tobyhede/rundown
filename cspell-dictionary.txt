@@ -495,3 +495,6 @@ cursorless
 unmigrated
 watchpoints
 reselects
+nvmrc
+pipx
+ziglang
