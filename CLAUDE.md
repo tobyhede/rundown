@@ -656,24 +656,23 @@ whether it describes code that exists _today_ or code we _intend_ to build:
 - **`docs/internal/`** holds **descriptive** docs — the **current** design,
   architecture, and implementation. These are living documents, edited in place
   as the code changes. They describe how the system works right now.
-- **`docs/superpowers/`** holds **prospective** docs — dated, write-once specs
-  (`specs/`), implementation plans (`plans/`), and design notes (`notes/`) for
-  work we plan to do. A new design for the same feature becomes a new dated
-  file; existing ones are never overwritten. Trackable issues and follow-up work
-  belong in GitHub issues, not in-repo docs.
+- **Prospective work is not an in-repo document.** A spec or plan is a GitHub
+  issue; a decision is an ADR under `docs/adr/` (or
+  `packages/<package>/docs/adr/` for a package-scoped one). See
+  `docs/agents/issue-tracker.md` and `docs/agents/domain.md`.
+- **`docs/superpowers/`** is a closed historical record of dated specs, plans,
+  and design notes written before this rule. Do not add to it, and do not edit
+  what is there.
 
-Roadmaps belong in GitHub epic issues, not dated `docs/superpowers/` files. Use
-an `Epic:` issue for the overall roadmap, `Cluster:` issues for coherent
-implementation clusters, and leaf issues for concrete defects or features. Link
-the hierarchy with GitHub parent/sub-issue relationships when available, and
-keep the readable issue body checklist in sync. Put cluster-level agent handoff
-plans in `docs/superpowers/plans/` only when they contain actionable
-implementation steps.
+Roadmaps belong in GitHub epic issues. Use an `Epic:` issue for the overall
+roadmap, `Cluster:` issues for coherent implementation clusters, and leaf issues
+for concrete defects or features. Link the hierarchy with GitHub
+parent/sub-issue relationships when available, and keep the readable issue body
+checklist in sync.
 
-Litmus test: a dated filename (`YYYY-MM-DD-…`) or a description of unbuilt work
-is **prospective** and belongs under `docs/superpowers/` — never in
-`docs/internal/`. Put the current design in `docs/internal/`; put the plan for
-changing it in `docs/superpowers/plans/`.
+Litmus test: a description of unbuilt work is **prospective** and never belongs
+in `docs/internal/`. Put the current design in `docs/internal/`, the decision
+behind a change in an ADR, and the spec for the change in a GitHub issue.
 
 ## Agent skills
 
@@ -684,10 +683,16 @@ Issues live in GitHub Issues on `tobyhede/rundown`, driven via the `gh` CLI. See
 
 **Witness rule.** Open an issue only with a witness. A defect needs a failing
 test that pins its claim, committed or on a named branch, and linked from the
-issue. A design question needs the decision it blocks on, stated. A finding
-without a witness goes to the user in the conversation, or as a comment on the
-existing issue it concerns — never as a new issue. Epic bodies carry order and
-state only; the sub-issue tree is membership, and for a defect the test is the
+issue. Agent confusion seen in a case run (rundown refused correctly and the
+agent went wrong,
+[ADR 0007](docs/adr/0007-observed-agent-runs-are-the-primary-oracle.md)) has no
+deterministic test: its witness is the redacted verdict of one failing run and a
+failure-rate table over at least 5 runs of the case, both pasted into the issue,
+and the fix is shown by the same table over at least 5 runs after the change. A
+design question needs the decision it blocks on, stated. A finding without a
+witness goes to the user in the conversation, or as a comment on the existing
+issue it concerns — never as a new issue. Epic bodies carry order and state
+only; the sub-issue tree is membership, and for a defect the test is the
 citation.
 
 ### Triage labels
@@ -697,8 +702,8 @@ The five canonical triage roles use their default label strings. See
 
 ### Domain docs
 
-Multi-context: a root `CONTEXT-MAP.md` over per-package `CONTEXT.md` files, with
-ADRs at the root for system-wide decisions and under each package for local
+Multi-context: a root `GLOSSARY-MAP.md` over per-package `GLOSSARY.md` files,
+with ADRs at the root for system-wide decisions and under each package for local
 ones. See `docs/agents/domain.md`.
 
 ## Conceptual Model

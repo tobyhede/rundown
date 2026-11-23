@@ -83,26 +83,25 @@ unbuilt plans misleads every reader.
 
 - **Descriptive docs are living.** They track reality and are edited in place as
   the code changes. `docs/internal/` is the home for current design.
-- **Prospective docs are an immutable, dated record.** Each spec or plan is
-  written once, committed, and never overwritten — a new design for the same
-  feature becomes a new dated file. `docs/superpowers/` is the home for these.
+- **Prospective work is not an in-repo document.** A spec or plan is a GitHub
+  issue. A decision is an ADR in `docs/adr/`, or in
+  `packages/<package>/docs/adr/` when it is scoped to one package.
 - **Roadmaps are GitHub epics.** Use `Epic:` issues for cross-cluster roadmaps,
   `Cluster:` issues for implementation clusters, and leaf issues for concrete
-  defects or features. `docs/superpowers/plans/` is for actionable cluster
-  handoff plans, not living roadmap trackers.
+  defects or features.
+- **`docs/superpowers/` is closed.** It holds the dated specs, plans, and notes
+  written before this rule. Nothing new goes there.
 
 **Litmus test:** _Does this describe code that exists today?_ →
-`docs/internal/`. _Does this describe code we have not built yet?_ →
-`docs/superpowers/`. A dated filename (`YYYY-MM-DD-…`) is always prospective and
-never belongs in `docs/internal/`.
+`docs/internal/`. _Does this record why we chose something?_ → an ADR. _Does
+this describe code we have not built yet?_ → a GitHub issue.
 
-| Directory                 | Kind        | Audience           | Content                                                               |
-| ------------------------- | ----------- | ------------------ | --------------------------------------------------------------------- |
-| `docs/spec/`              | Descriptive | All users          | Normative contracts: language spec, grammar, CLI output spec          |
-| `docs/reference/`         | Descriptive | Users & operators  | CLI, runtime, MCP, security, tool references                          |
-| `docs/security/`          | Descriptive | Security reviewers | Security analyses and threat-model records                            |
-| `docs/guides/`            | Descriptive | Users              | Workflow and integration guides                                       |
-| `docs/internal/`          | Descriptive | Contributors       | **Current** implementation, testing, Docker, architecture & design    |
-| `docs/superpowers/specs/` | Prospective | Contributors       | Dated design specs for planned work (`YYYY-MM-DD-<topic>-design.md`)  |
-| `docs/superpowers/plans/` | Prospective | Contributors       | Dated implementation plans for planned work (`YYYY-MM-DD-<name>.md`)  |
-| `docs/superpowers/notes/` | Prospective | Contributors       | Dated design notes for in-flight work (trackable issues go in GitHub) |
+| Directory           | Kind        | Audience           | Content                                                            |
+| ------------------- | ----------- | ------------------ | ------------------------------------------------------------------ |
+| `docs/spec/`        | Descriptive | All users          | Normative contracts: language spec, grammar, CLI output spec       |
+| `docs/reference/`   | Descriptive | Users & operators  | CLI, runtime, MCP, security, tool references                       |
+| `docs/security/`    | Descriptive | Security reviewers | Security analyses and threat-model records                         |
+| `docs/guides/`      | Descriptive | Users              | Workflow and integration guides                                    |
+| `docs/internal/`    | Descriptive | Contributors       | **Current** implementation, testing, Docker, architecture & design |
+| `docs/adr/`         | Decision    | Contributors       | Architecture decision records, numbered and never renumbered       |
+| `docs/superpowers/` | Historical  | Contributors       | Closed record of earlier dated specs, plans, and notes; do not add |

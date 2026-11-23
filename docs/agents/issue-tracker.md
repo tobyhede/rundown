@@ -1,13 +1,24 @@
 # Issue tracker: GitHub
 
-Issues, roadmaps and follow-up work for this repo live as GitHub issues. Use the
-`gh` CLI for all operations against them.
+Issues, specs, roadmaps and follow-up work for this repo live as GitHub issues.
+Use the `gh` CLI for all operations against them.
 
-**This does not relocate prospective documentation.** Per `CLAUDE.md`, dated
-specs, implementation plans and design notes stay in `docs/superpowers/`, and
-the current design stays in `docs/internal/`. A skill that publishes a _spec_
-writes it there; only trackable issues and follow-up work become GitHub issues.
-`docs/README.md` remains the documentation index.
+Decisions are recorded as ADRs: `docs/adr/` for system-wide decisions,
+`packages/<package>/docs/adr/` for package-scoped ones. See
+`docs/agents/domain.md`. The current design stays in `docs/internal/`.
+`docs/superpowers/` is a closed historical record: do not add to it.
+
+## Witnesses
+
+`CLAUDE.md` § Issue tracker holds the witness rule. How each witness is cited:
+
+- **Defect**: link the failing test, by file path on a named branch or commit.
+- **Agent confusion from a case run**: paste the redacted verdict JSON of one
+  failing run and a table of outcomes over at least 5 runs of the case. Evidence
+  bundles are git-ignored local files, so a path to one is not a witness; paste
+  the content. Add the same table over at least 5 runs after the fix before
+  closing.
+- **Design question**: state the decision it blocks on.
 
 ## Conventions
 

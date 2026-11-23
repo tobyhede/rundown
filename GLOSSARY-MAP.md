@@ -1,4 +1,4 @@
-# Context Map
+# Glossary Map
 
 Rundown defines executable runbooks and the lifecycle of their runs, delegation,
 and orchestration authority.
