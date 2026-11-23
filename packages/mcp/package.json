@@ -24,13 +24,13 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@jest/globals": "^30.4.1",
+    "@jest/globals": "^30.5.2",
     "@types/jest": "^30.0.0",
-    "@types/node": "^26.2.0",
-    "fta-cli": "3.0.1",
-    "jest": "^30.4.2",
-    "jest-mock": "^30.4.1",
-    "ts-jest": "^29.4.11",
+    "@types/node": "^26.6.6",
+    "fta-cli": "3.1.0",
+    "jest": "^30.5.2",
+    "jest-mock": "^30.5.2",
+    "ts-jest": "^29.4.15",
     "typescript": "^6.0.3"
   }
 }
