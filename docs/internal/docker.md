@@ -133,7 +133,8 @@ migrate, shim, or rewrite stale runbook state.
 | `scripts/e2e-shell.sh`                         | Host-side launcher for interactive Claude **or Codex** session                       |
 | `scripts/Dockerfile.verify`                    | Shared Dockerfile (`e2e` stage extends `local`)                                      |
 | `docker-compose.e2e.yml`                       | Compose service with volume mounts                                                   |
-| `scripts/e2e-entrypoint.sh`                    | Container entrypoint (6-phase test runner)                                           |
+| `scripts/e2e-entrypoint.sh`                    | Container entrypoint (phased test runner, see [E2E Coverage](#e2e-coverage))         |
+| `scripts/e2e-command-recorder.mjs`             | Installed as `rundown` and `rd` in the image; writes the command record              |
 | `scripts/e2e-shell-entrypoint.sh`              | Container entrypoint (workspace setup + interactive claude)                          |
 | `scripts/e2e-codex-shell-entrypoint.sh`        | Container entrypoint (workspace setup + Codex plugin install + interactive codex)    |
 | `scripts/e2e-codex-agents.md`                  | Fallback/debug Rundown CLI notes for Codex plugin-loading failures                   |
@@ -184,14 +185,63 @@ closure enforcement parity remain Stage 2 work.
 
 ### E2E Coverage
 
-| Phase                | Description                                                             |
-| -------------------- | ----------------------------------------------------------------------- |
-| 1. Prepare workspace | Copies fixture, git init, installs deps, runs fixture tests             |
-| 2. Resolve plugin    | Finds globally-installed plugin directory                               |
-| 3. Check credentials | Verifies Claude credentials exist (hard fail if missing)                |
-| 4. Run claude -p     | Executes `/writing-plans` prompt with plugin (600s timeout)             |
-| 5. Verify artifacts  | Checks plan file exists, schema validation (rdx), structural validation |
-| 6. Report            | Pass/fail summary with log locations                                    |
+| Phase                | Description                                                                                                                                                 |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Prepare workspace | Copies fixture, git init, installs deps, runs fixture tests                                                                                                 |
+| 2. Resolve plugin    | Finds globally-installed plugin directory                                                                                                                   |
+| 2b. Check sandbox    | Runs a command step with the built-in policy and checks that it reports `sandboxed: true`, with no `Sandbox unavailable` warning and no `policy_denied`     |
+| 2c. Check recorder   | Runs a sandboxed step that calls `rundown --version` and checks that the command record holds the outer `rd run` as top-level and the step's call as nested |
+| 3. Check credentials | Verifies Claude credentials exist (hard fail if missing)                                                                                                    |
+| 4. Run claude -p     | Executes `/writing-plans` prompt with plugin (600s timeout)                                                                                                 |
+| 5. Verify artifacts  | Checks plan file exists, schema validation (rdx), structural validation                                                                                     |
+| 6. Report            | Pass/fail summary with log locations                                                                                                                        |
+
+Phases 1 to 2c need no Claude credentials. On every exit path the entrypoint
+copies the command record to the mounted logs directory.
+
+### Command Record
+
+The E2E image installs `scripts/e2e-command-recorder.mjs` as
+`/usr/local/bin/rundown` and `/usr/local/bin/rd`, in place of the real bins. The
+real bins are kept in `/usr/local/lib/rundown-command-recorder/real/`. For each
+call the recorder runs the real CLI, passes stdin, stdout, stderr, the exit code
+and signals through unchanged, and appends one JSON line to the **command
+record** (see
+[ADR 0007](../adr/0007-observed-agent-runs-are-the-primary-oracle.md)).
+
+The record is written to the path in `$RUNDOWN_COMMAND_RECORD`, which the image
+sets to `/tmp/rundown-command-record/commands.jsonl`. It is under `/tmp` because
+that is where the built-in policy lets a sandboxed step command write.
+
+Each entry has these fields:
+
+| Field         | Value                                                          |
+| ------------- | -------------------------------------------------------------- |
+| `version`     | `1`                                                            |
+| `id`          | Unique id of this call                                         |
+| `parent_id`   | Id of the call this one ran inside, or `null`                  |
+| `nested`      | `true` when `parent_id` is set                                 |
+| `name`        | The name the caller used: `rundown` or `rd`                    |
+| `args`        | Arguments, in order                                            |
+| `cwd`         | The caller's working directory                                 |
+| `started_at`  | ISO 8601 time the call started                                 |
+| `duration_ms` | Whole milliseconds until the real CLI ended                    |
+| `exit_code`   | The exit code the caller got, or `null` when a signal ended it |
+| `signal`      | The signal that ended the CLI, or `null`                       |
+| `stdout`      | Everything the CLI wrote to stdout, decoded as UTF-8           |
+| `stderr`      | Everything the CLI wrote to stderr, decoded as UTF-8           |
+
+A call made from a runbook step command is nested: the recorder sets
+`RUNDOWN_COMMAND_RECORD_PARENT` to its own entry id for the CLI it starts, and a
+call that sees the variable records it as `parent_id`.
+
+An entry is appended when its call ends, so a nested entry comes before the
+entry of the call it ran inside. Order entries by `started_at`, or follow
+`parent_id`.
+
+A call that cannot open the record does not run the CLI. It prints a message to
+stderr and exits 125, so a gap in the record is never silent. A call killed with
+`SIGKILL` leaves no entry.
 
 > **Warning:** The E2E harness runs agents with elevated, non-interactive
 > automation flags. `scripts/e2e-entrypoint.sh` uses Claude Code's
@@ -376,7 +426,14 @@ The E2E entrypoint writes to `./logs/` on the host (via volume mount):
 ls logs/e2e-*.log              # Entrypoint pass/fail output
 ls logs/workflow-*.jsonl       # claude -p JSON output
 ls logs/debug-*.log            # Claude Code debug logs
+ls logs/command-record-*.jsonl # Copy of the command record, one per run
+ls logs/sandbox-check.*        # Phase 2b output (sandbox-check.json, sandbox-check.err)
+ls logs/recorder-check.*       # Phase 2c output (recorder-check.json, recorder-check.err)
 ```
+
+`command-record-<stamp>.jsonl` is copied from `$RUNDOWN_COMMAND_RECORD` when the
+entrypoint exits, on a pass or a failure. See [Command Record](#command-record)
+for its fields.
 
 ### Debugging Plugin Issues
 
