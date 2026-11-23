@@ -111,9 +111,9 @@ the Dockerfile.
 
 ## E2E Test Harness
 
-Tests the full plugin workflow: `claude -p` triggers hook dispatch, the
-`/writing-plans` skill, and runbook execution against a realistic test
-application.
+Tests the full plugin workflow: `claude -p` is given a planning task, and the
+agent is expected to reach `planning/write-plan.runbook.md` through the
+`writing-plans` skill and run it against a realistic test application.
 
 **Prerequisites:** Docker, Claude Code credentials (mandatory — exits with error
 if missing), and the native build tools below.
@@ -216,12 +216,12 @@ closure enforcement parity remain Stage 2 work.
 
 | Phase                | Description                                                                                                                                                 |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. Prepare workspace | Copies fixture, git init, installs deps, runs fixture tests                                                                                                 |
+| 1. Prepare workspace | Copies fixture, git init, installs deps, runs fixture tests, and stops if the workspace already holds a `.rundown` directory                                |
 | 2. Resolve plugin    | Finds globally-installed plugin directory                                                                                                                   |
 | 2b. Check sandbox    | Runs a command step with the built-in policy and checks that it reports `sandboxed: true`, with no `Sandbox unavailable` warning and no `policy_denied`     |
 | 2c. Check recorder   | Runs a sandboxed step that calls `rundown --version` and checks that the command record holds the outer `rd run` as top-level and the step's call as nested |
 | 3. Check credentials | Verifies Claude credentials exist (hard fail if missing)                                                                                                    |
-| 4. Run claude -p     | Executes `/writing-plans` prompt with plugin (600s timeout)                                                                                                 |
+| 4. Run claude -p     | Gives the agent a planning task with the plugin loaded (600s timeout). The prompt names no skill, runbook or command                                        |
 | 5. Verify artifacts  | Checks plan file exists, schema validation (rdx), structural validation                                                                                     |
 | 6. Report            | Pass/fail summary with log locations                                                                                                                        |
 

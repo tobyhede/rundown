@@ -21,3 +21,10 @@ logs/
 site/
 .husky/
 .changeset/
+
+# Leftovers of local E2E runs in the test fixture. They are git-ignored, so they
+# exist only in a clone that has run the fixture. Copied into the image, old
+# rundown state makes the harness report runbook activity the agent never had.
+tests/e2e/fixtures/test-app/.rundown/
+tests/e2e/fixtures/test-app/.claude/
+tests/e2e/fixtures/test-app/dist/

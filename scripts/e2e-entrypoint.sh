@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # e2e-entrypoint.sh — Container entrypoint for E2E test harness
-# Validates the full plugin workflow: claude -p → /writing-plans skill → agent runs rd run → runbook execution
+# Validates the full plugin workflow: claude -p with a planning task → writing-plans skill → agent runs rundown run → runbook execution
 set -euo pipefail
 
 LOG_DIR="$HOME/logs"
@@ -76,6 +76,18 @@ pass "Fixture tests"
 git add -A
 git commit --quiet -m "Initial commit"
 pass "Workspace prepared at $WORKSPACE"
+
+# The fixture must arrive with no rundown state. Phase 5 reads .rundown to
+# decide whether the agent ran a runbook, so state left by an earlier run would
+# pass that phase when the agent ran nothing. .dockerignore keeps the fixture's
+# git-ignored leftovers out of the image; this check fails the run if any
+# arrive another way.
+if [ -e "$WORKSPACE/.rundown" ]; then
+  fail "The fixture holds rundown state before the agent ran: $WORKSPACE/.rundown"
+  log "Remove tests/e2e/fixtures/test-app/.rundown from the image build context."
+  exit 1
+fi
+pass "Workspace holds no rundown state"
 
 # ── 2. Resolve plugin directory ──────────────────────────────────────────────
 
@@ -251,13 +263,17 @@ fi
 # ── 4. Run claude -p ─────────────────────────────────────────────────────────
 
 hr
-log "Phase 4: Running claude -p with /writing-plans skill (agent follows skill body to start runbook)..."
+log "Phase 4: Running claude -p with a planning task (the agent is expected to reach write-plan through the writing-plans skill)..."
 
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 WORKFLOW_LOG="$LOG_DIR/workflow-${TIMESTAMP}.jsonl"
 DEBUG_LOG="$LOG_DIR/debug-${TIMESTAMP}.log"
 
-PROMPT="Invoke the end-to-end-testing skill: Skill(skill: \"rundown:end-to-end-testing\"). Target workflow: planning/write-plan.runbook.md. Task: Add a health check endpoint at GET /health that returns JSON with status and database connectivity"
+# The agent is given a planning task and nothing else. It is expected to reach
+# planning/write-plan.runbook.md through the plugin's writing-plans skill. The
+# prompt names no skill, runbook or command: whether the skills are enough to
+# get the agent there is part of what the run shows.
+PROMPT="Write an implementation plan for this task: Add a health check endpoint at GET /health that returns JSON with status and database connectivity"
 
 set +e
 timeout 600 claude -p "$PROMPT" \
